@@ -1,0 +1,19 @@
+# Penrose App - Cursor Rules
+
+## MANDATORY: Authentication Code
+
+**DO NOT modify any auth-related code without explicitly asking the user first.**
+
+Auth in this project is fragile and was painstakingly debugged. Touching it can break sign-in, tokens, middleware, or Convex validation.
+
+Auth-related files include:
+- convex/auth.ts
+- convex/auth.config.ts
+- convex/http.ts
+- middleware.ts
+- app/signin/page.tsx
+- app/api/auth/[...nextauth]/route.ts
+- app/layout.tsx (ConvexAuthNextjsServerProvider)
+- app/ConvexClientProvider.tsx
+
+Before editing any of these files, or files that import from them, ask: "Do you want me to modify auth-related code? It may affect sign-in."

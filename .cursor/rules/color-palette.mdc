@@ -1,0 +1,35 @@
+---
+description: App color palette - black/white/grays only, except badges and labels
+alwaysApply: true
+---
+
+# Color Palette
+
+The app must use **black, white, and shades of gray only** until further notice.
+
+**Exception:** Badges, tags, and labels may use color (e.g. status badges like draft/published, status pills, category tags).
+
+## When adding or modifying UI
+
+- Use `black`, `white`, and Tailwind gray scale (`gray-50` through `gray-950`)
+- No blue, green, red, yellow, etc. for buttons, links, backgrounds, borders, or text (except in badges/tags/labels)
+- Links: use gray text with hover underline or similar, not colored text
+- Buttons: use gray scale (e.g. `bg-gray-900`, `bg-gray-100`), not colored backgrounds
+- Borders: gray only
+
+## Allowed color usage
+
+- Badges (e.g. post status: draft, published, scheduled, archived)
+- Tags and labels
+- Category pills or similar
+
+## Examples
+
+```
+// ❌ Colored buttons
+className="bg-blue-600 text-white"
+
+// ✅ Gray scale
+className="bg-gray-900 text-white"
+className="bg-gray-200 text-gray-900"
+```
