@@ -9,7 +9,9 @@ import { useUnsavedChanges } from "@/lib/useUnsavedChanges";
 import { publicPostUrl } from "@/lib/urls";
 import { Id } from "@/convex/_generated/dataModel";
 import { EditorialMode, EDITORIAL_MODES } from "@/convex/lib/prompts";
+import { NudgeDirection } from "@/convex/lib/nudges";
 import { SuggestionDiff } from "./components/SuggestionDiff";
+import { VoiceScratchpad } from "./components/VoiceScratchpad";
 
 // ── Suggestion state type ────────────────────────────────────────────────────
 
@@ -19,6 +21,10 @@ type SuggestionPayload = {
   suggestedText: string;
   provider: string;
   model: string;
+  promptVersion: string;
+  nudgeDirection?: string;
+  runId?: Id<"editorialRuns">;
+  hasAlternate?: boolean;
 };
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -53,9 +59,12 @@ export default function EditPostPage() {
   const publishPost = useMutation(api.posts.publishPost);
   const unpublishPost = useMutation(api.posts.unpublishPost);
   const restoreRevision = useMutation(api.postRevisions.restoreRevision);
+  const recordNudge = useMutation(api.voiceReactions.recordNudge);
   const refineDevelopmental = useAction(api.ai.refineDevelopmental);
   const refineLine = useAction(api.ai.refineLine);
   const refineCopy = useAction(api.ai.refineCopy);
+  const refineWithNudge = useAction(api.ai.refineWithNudge);
+  const tryAgainFromRun = useAction(api.ai.tryAgainFromRun);
 
   // ── Editor state ───────────────────────────────────────────────────────
   const [title, setTitle] = useState("");
@@ -78,8 +87,11 @@ export default function EditPostPage() {
     provider: string;
     model: string;
   } | null>(null);
-  const [activeRevisionIdBeforeApply, setActiveRevisionIdBeforeApply] =
-    useState<Id<"postRevisions"> | null>(null);
+  const [suggestionIndex, setSuggestionIndex] = useState(0);
+  const [isNudging, setIsNudging] = useState(false);
+  const [nudgingDirection, setNudgingDirection] =
+    useState<NudgeDirection | null>(null);
+  const [isTryingAgain, setIsTryingAgain] = useState(false);
 
   // ── Dirty detection ────────────────────────────────────────────────────
   const isDirty = initialised && (title !== serverTitle || body !== serverBody);
@@ -98,7 +110,6 @@ export default function EditPostPage() {
       return;
     }
 
-    // Server changed (e.g., restore action) — sync if user hasn't diverged
     if (post.title !== serverTitle || (post.body ?? "") !== serverBody) {
       if (!isDirty) {
         setTitle(post.title);
@@ -107,7 +118,7 @@ export default function EditPostPage() {
       setServerTitle(post.title);
       setServerBody(post.body ?? "");
     }
-  }, [post?.title, post?.body, post?.updatedAt, initialised, serverTitle, serverBody, isDirty]);
+  }, [post, initialised, serverTitle, serverBody, isDirty]);
 
   // ── Handlers (useCallback before early returns) ────────────────────────
 
@@ -127,13 +138,71 @@ export default function EditPostPage() {
       try {
         const result = await actionMap[mode]({ postId: post._id });
         setSuggestion(result);
+        setSuggestionIndex((i) => i + 1);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Refinement failed");
       } finally {
         setRefiningMode(null);
       }
     },
-    [post?._id, refineDevelopmental, refineLine, refineCopy]
+    [post, refineDevelopmental, refineLine, refineCopy]
+  );
+
+  const handleNudge = useCallback(
+    async (direction: NudgeDirection) => {
+      if (!post || !suggestion) return;
+
+      setIsNudging(true);
+      setNudgingDirection(direction);
+      setError("");
+
+      try {
+        await recordNudge({
+          orgId: post.orgId,
+          postId: post._id,
+          editorialMode: suggestion.mode,
+          nudgeDirection: direction,
+          provider: suggestion.provider,
+          model: suggestion.model,
+        });
+
+        const result = await refineWithNudge({
+          postId: post._id,
+          mode: suggestion.mode,
+          nudgeDirection: direction,
+        });
+
+        setSuggestion({ ...result, nudgeDirection: direction });
+        setSuggestionIndex((i) => i + 1);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Nudge failed");
+      } finally {
+        setIsNudging(false);
+        setNudgingDirection(null);
+      }
+    },
+    [post, suggestion, recordNudge, refineWithNudge]
+  );
+
+  const handleTryAgain = useCallback(
+    async () => {
+      if (!post || !suggestion) return;
+      if (!suggestion.runId) return;
+
+      setIsTryingAgain(true);
+      setError("");
+
+      try {
+        const result = await tryAgainFromRun({ runId: suggestion.runId });
+        setSuggestion(result);
+        setSuggestionIndex((i) => i + 1);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Try again failed");
+      } finally {
+        setIsTryingAgain(false);
+      }
+    },
+    [post, suggestion, tryAgainFromRun]
   );
 
   const handleRestore = useCallback(
@@ -147,15 +216,16 @@ export default function EditPostPage() {
         setPreApplyBody(null);
         setAppliedAiSource(null);
         setSuggestion(null);
-        setActiveRevisionIdBeforeApply(null);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to restore revision");
+        setError(
+          err instanceof Error ? err.message : "Failed to restore revision"
+        );
       }
     },
-    [post?._id, isDirty, confirmLeave, restoreRevision]
+    [post, isDirty, confirmLeave, restoreRevision]
   );
 
-  // ── Loading / error states (after all hooks) ───────────────────────────────
+  // ── Loading / error states (after all hooks) ───────────────────────────
   if (org === undefined || site === undefined || post === undefined) {
     return <p className="text-gray-500 animate-pulse">Loading…</p>;
   }
@@ -169,7 +239,7 @@ export default function EditPostPage() {
   const isEditable = post.status === "draft" || post.status === "scheduled";
   const canRefine = isEditable && !isDirty && !suggestion && !refiningMode;
 
-  // ── Remaining handlers (don't need useCallback, defined after guards) ──
+  // ── Remaining handlers ─────────────────────────────────────────────────
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -218,53 +288,35 @@ export default function EditPostPage() {
     try {
       await unpublishPost({ postId: post._id });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to return to draft");
+      setError(
+        err instanceof Error ? err.message : "Failed to return to draft"
+      );
     } finally {
       setIsUnpublishing(false);
     }
   };
 
-  const handleApplySuggestion = () => {
+  const handleApplySuggestion = (text: string) => {
     if (!suggestion) return;
     setPreApplyBody(body);
-    setBody(suggestion.suggestedText);
+    setBody(text);
     setAppliedAiSource({
       operationType: suggestion.mode,
       provider: suggestion.provider,
       model: suggestion.model,
     });
     setSuggestion(null);
-    if (post.activeRevisionId) {
-      setActiveRevisionIdBeforeApply(post.activeRevisionId);
-    }
   };
 
   const handleRejectSuggestion = () => {
     setSuggestion(null);
   };
 
-  const handleUndoApply = async () => {
-    if (!activeRevisionIdBeforeApply) return;
-
-    if (preApplyBody !== null) {
-      // Not saved yet — revert local state
-      setBody(preApplyBody);
-      setPreApplyBody(null);
-      setAppliedAiSource(null);
-      setActiveRevisionIdBeforeApply(null);
-      return;
-    }
-
-    // Saved — restore the former revision (creates new revision, doesn't delete)
-    setError("");
-    try {
-      await restoreRevision({ postId: post._id, revisionId: activeRevisionIdBeforeApply });
-      setPreApplyBody(null);
-      setAppliedAiSource(null);
-      setActiveRevisionIdBeforeApply(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to undo apply");
-    }
+  const handleUndoApply = () => {
+    if (preApplyBody === null) return;
+    setBody(preApplyBody);
+    setPreApplyBody(null);
+    setAppliedAiSource(null);
   };
 
   const handleBack = () => {
@@ -302,8 +354,8 @@ export default function EditPostPage() {
                 unsaved changes
               </span>
             )}
-            {(preApplyBody !== null || activeRevisionIdBeforeApply !== null) && (
-              <span className="px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700">
+            {preApplyBody !== null && (
+              <span className="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">
                 suggestion applied
               </span>
             )}
@@ -343,14 +395,27 @@ export default function EditPostPage() {
           />
         </div>
 
-        {/* ── Suggestion comparison (replaces textarea when active) ── */}
         {suggestion ? (
           <SuggestionDiff
             mode={suggestion.mode}
             originalText={suggestion.originalText}
             suggestedText={suggestion.suggestedText}
+            provider={suggestion.provider}
+            model={suggestion.model}
+            promptVersion={suggestion.promptVersion}
+            orgId={post.orgId}
+            postId={post._id}
+            suggestionIndex={suggestionIndex}
+            nudgeDirection={suggestion.nudgeDirection}
+            hasAlternate={suggestion.hasAlternate}
             onApply={handleApplySuggestion}
             onReject={handleRejectSuggestion}
+            onNudge={handleNudge}
+            onTryAgain={suggestion.runId ? handleTryAgain : undefined}
+            isNudging={isNudging}
+            isTryingAgain={isTryingAgain}
+            nudgingDirection={nudgingDirection}
+            draftInvalidated={body !== suggestion.originalText}
           />
         ) : (
           <div>
@@ -410,7 +475,7 @@ export default function EditPostPage() {
             </button>
           )}
 
-          {activeRevisionIdBeforeApply !== null && (
+          {preApplyBody !== null && (
             <button
               type="button"
               onClick={handleUndoApply}
@@ -453,7 +518,7 @@ export default function EditPostPage() {
                       ? "Save your changes before running editorial passes"
                       : config.description
                   }
-                  className="px-3 py-1.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-md text-sm font-medium hover:bg-purple-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="px-3 py-1.5 bg-gray-100 text-gray-800 border border-gray-300 rounded-md text-sm font-medium hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {refiningMode === mode
                     ? `Running ${config.label}…`
@@ -470,6 +535,9 @@ export default function EditPostPage() {
           </div>
         )}
       </div>
+
+      {/* ── Voice preferences scratchpad ─────────────────────────────── */}
+      {isEditable && <VoiceScratchpad orgId={post.orgId} />}
 
       {/* ── Revision history ─────────────────────────────────────────── */}
       {revisions && revisions.length > 0 && (

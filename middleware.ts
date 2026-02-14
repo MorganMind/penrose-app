@@ -95,7 +95,7 @@ export default convexAuthNextjsMiddleware(
       return response;
     }
 
-    if (pathname.startsWith("/app")) {
+    if (pathname.startsWith("/app") || pathname.startsWith("/start")) {
       const isAuthenticated = await convexAuth.isAuthenticated();
 
       const referer = request.headers.get("referer");

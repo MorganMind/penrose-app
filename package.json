@@ -7,11 +7,17 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "convex:dev": "convex dev"
+    "convex:dev": "convex dev",
+    "calibrate:voice": "npx tsx scripts/voice-calibration/run-calibration.ts",
+    "calibrate:voice:dry": "SKIP_EMBEDDINGS=true npx tsx scripts/voice-calibration/run-calibration.ts",
+    "validate:multi-variant": "npx tsx scripts/voice-calibration/validate-multi-variant.ts",
+    "regression": "npx tsx scripts/voice-calibration/run-regression.ts",
+    "regression:baseline": "npx tsx scripts/voice-calibration/run-regression.ts --save-baseline"
   },
   "dependencies": {
     "@auth/core": "^0.37.0",
     "@convex-dev/auth": "^0.0.90",
+    "diff": "^8.0.3",
     "next": "16.1.6",
     "next-auth": "^5.0.0-beta.30",
     "react": "19.2.3",

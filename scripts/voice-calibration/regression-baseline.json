@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "createdAt": "2026-02-14T12:41:24.692Z",
+  "static": {
+    "goodWinRate": 1,
+    "falseNegatives": 0,
+    "total": 41,
+    "meanSemanticGood": 0.8868292682926824,
+    "meanStylisticGood": 0.8829225074977263,
+    "meanScopeGood": 0.9367163166133016,
+    "meanCombinedGood": 0.8917729310240541,
+    "meanSemanticBad": 0.8012195121951217,
+    "meanStylisticBad": 0.6271983047558272,
+    "meanScopeBad": 0.848591078980804,
+    "meanCombinedBad": 0.6952114623774326,
+    "byMode": {
+      "line": {
+        "goodWinRate": 1,
+        "falseNegatives": 0,
+        "total": 34
+      },
+      "developmental": {
+        "goodWinRate": 1,
+        "falseNegatives": 0,
+        "total": 7
+      }
+    }
+  }
+}

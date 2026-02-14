@@ -1,6 +1,7 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { requireOrgMember } from "./access";
 import { slugify } from "./lib/slugify";
 
@@ -153,6 +154,20 @@ export const updatePost = mutation({
       lastEditedAt: now,
       updatedAt: now,
     });
+
+    if (!aiSource && body.trim().length > 0) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.voiceEngine.contributeToProfile,
+        {
+          userId,
+          orgId: post.orgId,
+          text: body,
+          sourceType: "manual_revision",
+          sourceId: revisionId,
+        }
+      );
+    }
   },
 });
 
@@ -180,6 +195,20 @@ export const publishPost = mutation({
       status: "published",
       updatedAt: Date.now(),
     });
+
+    if (post.body && post.body.trim().length > 0) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.voiceEngine.contributeToProfile,
+        {
+          userId: post.authorId,
+          orgId: post.orgId,
+          text: post.body,
+          sourceType: "published_post",
+          sourceId: postId,
+        }
+      );
+    }
   },
 });
 

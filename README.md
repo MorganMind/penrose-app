@@ -36,12 +36,21 @@ A multi-tenant blogging CMS built with Next.js (App Router, TypeScript), Convex,
    - `AUTH_SECRET`: Generate with `openssl rand -base64 32`
    - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`: Get from [Google Cloud Console](https://console.cloud.google.com/)
 
-4. **Start the Next.js development server:**
+4. **AI / Editorial features (Phase 12 — optional):**
+   Set Convex env vars for editorial refinement and voice validation:
+   ```bash
+   npx convex env set OPENAI_API_KEY sk-...
+   npx convex env set AI_PROVIDER openai    # optional, default: openai
+   npx convex env set AI_MODEL gpt-4o-mini  # optional, default: gpt-4o-mini
+   ```
+   See `env.example` for the full list.
+
+5. **Start the Next.js development server:**
    ```bash
    npm run dev
    ```
 
-5. **Open your browser:**
+6. **Open your browser:**
    - Home page (no auth required): [http://localhost:3000](http://localhost:3000)
    - Protected page (auth required): [http://localhost:3000/app](http://localhost:3000/app)
 
