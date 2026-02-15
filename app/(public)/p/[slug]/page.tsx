@@ -1,6 +1,7 @@
 import { fetchQuery } from "convex/nextjs";
 import { resolveSite } from "@/lib/resolveSite";
 import { api } from "@/convex/_generated/api";
+import { markdownToHtml } from "@/lib/markdown";
 
 /**
  * Validate slug format: alphanumeric, hyphens, reasonable length.
@@ -100,7 +101,7 @@ export default async function PostPage(props: {
 
       <div className="prose prose-gray max-w-none">
         {post.body ? (
-          <p className="whitespace-pre-wrap">{post.body}</p>
+          <div dangerouslySetInnerHTML={{ __html: markdownToHtml(post.body) }} />
         ) : (
           <p className="italic text-gray-400">This post has no content yet.</p>
         )}

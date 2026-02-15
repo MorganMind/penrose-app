@@ -96,11 +96,130 @@ export const createPost = mutation({
 });
 
 /**
+ * Lightweight draft save — updates post content without creating a revision.
+ *
+ * Called by autosave (debounced) and the manual save button. This is the
+ * "continuous autosave" path: responsive and cheap, never produces
+ * revision noise.
+ */
+export const saveDraft = mutation({
+  args: {
+    postId: v.id("posts"),
+    title: v.string(),
+    body: v.string(),
+  },
+  handler: async (ctx, { postId, title, body }) => {
+    const post = await ctx.db.get(postId);
+    if (!post) throw new Error("Post not found");
+
+    await requireOrgMember(ctx, post.orgId);
+
+    const now = Date.now();
+    await ctx.db.patch(postId, {
+      title,
+      body,
+      lastEditedAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
+/**
+ * Create a revision checkpoint — a meaningful, recoverable snapshot.
+ *
+ * Only called on specific events: apply suggestion, publish, milestone,
+ * restore. NOT called on every keystroke. Snapshots both body and title.
+ * Schedules compaction in the background after creation.
+ */
+export const createCheckpoint = mutation({
+  args: {
+    postId: v.id("posts"),
+    source: v.union(
+      v.literal("ai"),
+      v.literal("publish"),
+      v.literal("milestone"),
+      v.literal("restore")
+    ),
+    name: v.optional(v.string()),
+    aiMetadata: v.optional(
+      v.object({
+        provider: v.string(),
+        model: v.string(),
+        operationType: v.string(),
+        prompt: v.optional(v.string()),
+      })
+    ),
+  },
+  handler: async (ctx, { postId, source, name, aiMetadata }) => {
+    const post = await ctx.db.get(postId);
+    if (!post) throw new Error("Post not found");
+
+    const { userId } = await requireOrgMember(ctx, post.orgId);
+
+    const now = Date.now();
+    const isPinned = source === "milestone";
+
+    // Enforce milestone hard cap (40)
+    if (isPinned) {
+      const allRevisions = await ctx.db
+        .query("postRevisions")
+        .withIndex("by_post", (q) => q.eq("postId", postId))
+        .collect();
+      const pinnedCount = allRevisions.filter((r) => r.isPinned).length;
+      if (pinnedCount >= 40) {
+        throw new Error(
+          "Maximum of 40 milestones reached. Unpin an existing milestone first."
+        );
+      }
+    }
+
+    const latestRevision = await ctx.db
+      .query("postRevisions")
+      .withIndex("by_post_and_revision", (q) => q.eq("postId", postId))
+      .order("desc")
+      .first();
+
+    const revisionNumber = (latestRevision?.revisionNumber ?? 0) + 1;
+
+    const revisionId = await ctx.db.insert("postRevisions", {
+      postId,
+      body: post.body ?? "",
+      titleSnapshot: post.title,
+      source,
+      aiMetadata,
+      isPinned,
+      name: name ?? undefined,
+      revisionNumber,
+      createdAt: now,
+      authorId: userId,
+    });
+
+    await ctx.db.patch(postId, {
+      activeRevisionId: revisionId,
+      lastEditedAt: now,
+      updatedAt: now,
+    });
+
+    // Schedule background compaction (non-blocking)
+    await ctx.scheduler.runAfter(
+      0,
+      internal.postRevisions.compactRevisions,
+      { postId }
+    );
+
+    console.log(
+      `[checkpoint] created rev ${revisionNumber} (${source}) for post ${postId}`
+    );
+
+    return { revisionId, revisionNumber };
+  },
+});
+
+/**
  * Save edits to a post's title and body.
  *
- * Every save creates a new revision for full reversibility.
- * When `aiSource` is provided, the revision is marked as AI-originated
- * so the audit trail distinguishes human from machine edits.
+ * @deprecated Use saveDraft for autosave, createCheckpoint for revision events.
+ * Kept for backward compatibility. Creates a revision on every call.
  */
 export const updatePost = mutation({
   args: {
@@ -173,6 +292,9 @@ export const updatePost = mutation({
 
 /**
  * Flip a draft post to published.
+ *
+ * Creates a "publish" checkpoint revision before changing status, giving
+ * a guaranteed restore point for the exact published content.
  * Only drafts can be published via this mutation.
  */
 export const publishPost = mutation({
@@ -183,7 +305,7 @@ export const publishPost = mutation({
     const post = await ctx.db.get(postId);
     if (!post) throw new Error("Post not found");
 
-    await requireOrgMember(ctx, post.orgId);
+    const { userId } = await requireOrgMember(ctx, post.orgId);
 
     if (post.status !== "draft") {
       throw new Error(
@@ -191,10 +313,37 @@ export const publishPost = mutation({
       );
     }
 
+    const now = Date.now();
+
+    // Create a publish checkpoint — guaranteed restore point
+    const latestRevision = await ctx.db
+      .query("postRevisions")
+      .withIndex("by_post_and_revision", (q) => q.eq("postId", postId))
+      .order("desc")
+      .first();
+
+    const revisionNumber = (latestRevision?.revisionNumber ?? 0) + 1;
+
+    const revisionId = await ctx.db.insert("postRevisions", {
+      postId,
+      body: post.body ?? "",
+      titleSnapshot: post.title,
+      source: "publish",
+      isPinned: false,
+      revisionNumber,
+      createdAt: now,
+      authorId: userId,
+    });
+
     await ctx.db.patch(postId, {
       status: "published",
-      updatedAt: Date.now(),
+      activeRevisionId: revisionId,
+      updatedAt: now,
     });
+
+    console.log(
+      `[checkpoint] created publish rev ${revisionNumber} for post ${postId}`
+    );
 
     if (post.body && post.body.trim().length > 0) {
       await ctx.scheduler.runAfter(
@@ -209,6 +358,13 @@ export const publishPost = mutation({
         }
       );
     }
+
+    // Schedule background compaction
+    await ctx.scheduler.runAfter(
+      0,
+      internal.postRevisions.compactRevisions,
+      { postId }
+    );
   },
 });
 

@@ -398,10 +398,14 @@ async function main() {
   let failures: GatingFailure[] = [];
 
   if (baseline) {
+    const baselineFlat = { ...baseline.static } as Record<string, number>;
+    delete baselineFlat.byMode;
+    const currentFlat = { ...staticMetrics } as Record<string, number>;
+    delete currentFlat.byMode;
     failures = evaluateGating(
       STATIC_GATING_RULES,
-      baseline.static as Record<string, number>,
-      staticMetrics as Record<string, number>
+      baselineFlat,
+      currentFlat
     );
   } else {
     console.log("\nNo baseline found. Run with --save-baseline to create one.");

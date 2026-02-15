@@ -1,3 +1,389 @@
+# B3 Real-Time Editor — UI/Interaction Extraction (Post-Tiptap)
+
+> Scope: Tiptap editor, extensions, autosave, editor page, CSS, dependencies.
+> NOT in scope: Suggestion diff flow, voice engine, scoring, enforcement, backend pipelines.
+> Generated 2026-02-14. Reference only.
+
+---
+
+
+## 1. Tiptap Editor Core
+
+### `components/editor/PenroseEditor.tsx`
+
+```tsx
+"use client";
+
+import { useCallback, useEffect, useImperativeHandle, useRef, forwardRef } from "react";
+import { useEditor, EditorContent } from "@tiptap/react";
+import { createPenroseExtensions } from "./extensions";
+
+export type PenroseEditorRef = {
+  getMarkdown: () => string;
+  setContent: (markdown: string) => void;
+  focus: () => void;
+};
+
+export type PenroseEditorProps = {
+  initialMarkdown?: string;
+  onChangeMarkdown?: (markdown: string) => void;
+  readonly?: boolean;
+  placeholder?: string;
+  className?: string;
+};
+
+export const PenroseEditor = forwardRef<PenroseEditorRef, PenroseEditorProps>(
+  function PenroseEditor(
+    { initialMarkdown = "", onChangeMarkdown, readonly = false, placeholder, className },
+    ref
+  ) {
+    const onChangeRef = useRef(onChangeMarkdown);
+    onChangeRef.current = onChangeMarkdown;
+
+    const editor = useEditor({
+      immediatelyRender: false,
+      extensions: createPenroseExtensions(placeholder),
+      content: initialMarkdown,
+      contentType: "markdown",
+      editable: !readonly,
+      editorProps: {
+        attributes: {
+          class:
+            "prose-editor min-h-[200px] outline-none focus:outline-none",
+        },
+      },
+      onUpdate: ({ editor }) => {
+        if (editor.isDestroyed) return;
+        const md = editor.getMarkdown?.();
+        if (typeof md === "string") {
+          onChangeRef.current?.(md);
+        }
+      },
+    });
+
+    useEffect(() => {
+      if (!editor) return;
+      editor.setEditable(!readonly);
+    }, [editor, readonly]);
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        getMarkdown: () => {
+          if (!editor) return "";
+          return editor.getMarkdown?.() ?? "";
+        },
+        setContent: (markdown: string) => {
+          if (!editor) return;
+          editor.commands.setContent(markdown ?? "", {
+            contentType: "markdown",
+            emitUpdate: false,
+          });
+        },
+        focus: () => editor?.commands.focus(),
+      }),
+      [editor]
+    );
+
+    if (!editor) return null;
+
+    return (
+      <div className={className}>
+        <EditorContent editor={editor} />
+      </div>
+    );
+  }
+);
+
+```
+
+---
+
+### `components/editor/useAutosave.ts`
+
+```ts
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+export type SaveStatus = "idle" | "saving" | "saved" | "error";
+
+export type SavePayload = {
+  title: string;
+  body: string;
+};
+
+export type UseAutosaveOptions = {
+  onSave: (payload: SavePayload) => Promise<void>;
+  debounceMs?: number;
+};
+
+export function useAutosave({
+  onSave,
+  debounceMs = 600,
+}: UseAutosaveOptions) {
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRef = useRef<SavePayload | null>(null);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savingRef = useRef(false);
+
+  const save = useCallback(
+    async (payload: SavePayload) => {
+      if (savingRef.current) {
+        pendingRef.current = payload;
+        return;
+      }
+      savingRef.current = true;
+      setStatus("saving");
+      try {
+        await onSave(payload);
+        setStatus("saved");
+        if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = setTimeout(() => setStatus("idle"), 2000);
+      } catch {
+        setStatus("error");
+      } finally {
+        savingRef.current = false;
+        const next = pendingRef.current;
+        pendingRef.current = null;
+        if (next !== null) {
+          save(next);
+        }
+      }
+    },
+    [onSave]
+  );
+
+  useEffect(() => () => {
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+  }, []);
+
+  const scheduleSave = useCallback(
+    (payload: SavePayload) => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        save(payload);
+      }, debounceMs);
+    },
+    [save, debounceMs]
+  );
+
+  return { status, scheduleSave, save };
+}
+
+```
+
+---
+
+### `components/editor/SaveIndicator.tsx`
+
+```tsx
+"use client";
+
+import type { SaveStatus } from "./useAutosave";
+
+type SaveIndicatorProps = {
+  status: SaveStatus;
+  className?: string;
+};
+
+export function SaveIndicator({ status, className = "" }: SaveIndicatorProps) {
+  if (status === "idle") return null;
+
+  const text =
+    status === "saving"
+      ? "Saving…"
+      : status === "saved"
+        ? "Saved"
+        : status === "error"
+          ? "Save failed"
+          : "";
+
+  return (
+    <span
+      className={`text-xs text-gray-400 ${className}`}
+      aria-live="polite"
+    >
+      {text}
+    </span>
+  );
+}
+
+```
+
+---
+
+### `components/editor/index.ts`
+
+```ts
+export { PenroseEditor, type PenroseEditorRef, type PenroseEditorProps } from "./PenroseEditor";
+export { useAutosave, type SaveStatus, type SavePayload } from "./useAutosave";
+export { SaveIndicator } from "./SaveIndicator";
+
+```
+
+---
+
+
+## 2. Tiptap Extensions
+
+### `components/editor/extensions/index.ts`
+
+```ts
+"use client";
+
+import StarterKit from "@tiptap/starter-kit";
+import Link from "@tiptap/extension-link";
+import Placeholder from "@tiptap/extension-placeholder";
+import { Markdown } from "@tiptap/markdown";
+import { CleanPaste } from "./cleanPaste";
+import { GhostText } from "./ghostText";
+import { InlineReplacement } from "./inlineReplacement";
+import { DiffDecoration } from "./diffDecoration";
+
+/**
+ * Penrose baseline editor extensions.
+ * Minimal but serious set for long-form writing and Markdown publishing.
+ */
+export function createPenroseExtensions(placeholder?: string) {
+  return [
+    StarterKit.configure({
+      codeBlock: false,
+      heading: { levels: [1, 2, 3] },
+    }),
+    Link.configure({
+      openOnClick: false,
+      HTMLAttributes: { class: "text-gray-700 underline hover:text-gray-900" },
+    }),
+    Placeholder.configure({ placeholder: placeholder ?? "Start writing…" }),
+    Markdown.configure({
+      markedOptions: { gfm: true, breaks: true },
+    }),
+    CleanPaste,
+    GhostText,
+    InlineReplacement,
+    DiffDecoration,
+  ];
+}
+
+```
+
+---
+
+### `components/editor/extensions/ghostText.ts`
+
+```ts
+"use client";
+
+import { Extension } from "@tiptap/core";
+
+/**
+ * Placeholder extension for B3 ghost text (inline suggestions).
+ * No behavior implemented yet — architecture is extension-first.
+ */
+export const GhostText = Extension.create({
+  name: "ghostText",
+});
+
+```
+
+---
+
+### `components/editor/extensions/inlineReplacement.ts`
+
+```ts
+"use client";
+
+import { Extension } from "@tiptap/core";
+
+/**
+ * Placeholder extension for B3 inline replacement underline.
+ * No behavior implemented yet — architecture is extension-first.
+ */
+export const InlineReplacement = Extension.create({
+  name: "inlineReplacement",
+});
+
+```
+
+---
+
+### `components/editor/extensions/diffDecoration.ts`
+
+```ts
+"use client";
+
+import { Extension } from "@tiptap/core";
+
+/**
+ * Placeholder extension for B3 diff decoration overlays.
+ * No behavior implemented yet — architecture is extension-first.
+ */
+export const DiffDecoration = Extension.create({
+  name: "diffDecoration",
+});
+
+```
+
+---
+
+### `components/editor/extensions/cleanPaste.ts`
+
+```ts
+"use client";
+
+import { Extension } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+
+/**
+ * Clean paste: strip HTML formatting by default.
+ * Hold Shift while pasting to preserve formatting.
+ */
+export const CleanPaste = Extension.create({
+  name: "cleanPaste",
+
+  addProseMirrorPlugins() {
+
+    return [
+      new Plugin({
+        key: new PluginKey("cleanPaste"),
+        props: {
+          handlePaste(view, event) {
+            const html = event.clipboardData?.getData("text/html");
+            const text = event.clipboardData?.getData("text/plain") ?? "";
+
+            // Shift+paste: allow rich paste (default ProseMirror behavior)
+            if ("shiftKey" in event && event.shiftKey) return false;
+
+            // No HTML or empty: let default handler run
+            if (!html?.trim() || !text?.trim()) return false;
+
+            // HTML present without Shift: paste as plain text
+            event.preventDefault();
+            const { state, dispatch } = view;
+            const { from } = state.selection;
+            const tr = state.tr.insertText(text, from);
+            dispatch(tr);
+            return true;
+          },
+        },
+      }),
+    ];
+  },
+});
+
+```
+
+---
+
+
+## 3. Editor Page
+
+### `app/(app)/app/[orgSlug]/posts/[postId]/edit/page.tsx`
+
+```tsx
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -13,11 +399,7 @@ import { NudgeDirection } from "@/convex/lib/nudges";
 import { SuggestionDiff } from "./components/SuggestionDiff";
 import { VoiceScratchpad } from "./components/VoiceScratchpad";
 import { RefiningPlaceholder } from "./components/RefiningPlaceholder";
-import {
-  PenroseEditor,
-  type PenroseEditorRef,
-} from "@/components/editor/PenroseEditor";
-import { useRealtimeSuggestions } from "@/components/editor/useRealtimeSuggestions";
+import { PenroseEditor, type PenroseEditorRef } from "@/components/editor/PenroseEditor";
 import { useAutosave } from "@/components/editor/useAutosave";
 import { SaveIndicator } from "@/components/editor/SaveIndicator";
 
@@ -63,15 +445,10 @@ export default function EditPostPage() {
   );
 
   // ── Mutations & actions ────────────────────────────────────────────────
-  const saveDraft = useMutation(api.posts.saveDraft);
-  const createCheckpoint = useMutation(api.posts.createCheckpoint);
+  const updatePost = useMutation(api.posts.updatePost);
   const publishPost = useMutation(api.posts.publishPost);
   const unpublishPost = useMutation(api.posts.unpublishPost);
   const restoreRevision = useMutation(api.postRevisions.restoreRevision);
-  const createMilestone = useMutation(api.postRevisions.createMilestone);
-  const renameMilestoneMut = useMutation(api.postRevisions.renameMilestone);
-  const unpinMilestoneMut = useMutation(api.postRevisions.unpinMilestone);
-  const pinRevisionMut = useMutation(api.postRevisions.pinRevision);
   const recordNudge = useMutation(api.voiceReactions.recordNudge);
   const recordPreferenceSignals = useMutation(
     api.voicePreferenceSignals.recordPreferenceSignals
@@ -109,13 +486,6 @@ export default function EditPostPage() {
     useState<NudgeDirection | null>(null);
   const [isTryingAgain, setIsTryingAgain] = useState(false);
 
-  // ── Milestone state ─────────────────────────────────────────────────
-  const [milestonePrompt, setMilestonePrompt] = useState(false);
-  const [milestoneName, setMilestoneName] = useState("");
-  const [isCreatingMilestone, setIsCreatingMilestone] = useState(false);
-  const [editingMilestoneId, setEditingMilestoneId] = useState<Id<"postRevisions"> | null>(null);
-  const [editingMilestoneName, setEditingMilestoneName] = useState("");
-
   // ── A4.3: Stale request cancellation ────────────────────────────────
   const refineRequestId = useRef(0);
   const tryAgainRequestId = useRef(0);
@@ -137,35 +507,21 @@ export default function EditPostPage() {
   const isDirty = initialised && (title !== serverTitle || body !== serverBody);
   const { confirmLeave } = useUnsavedChanges(isDirty);
 
-  const isEditable =
-    post !== undefined && post !== null
-      ? post.status === "draft" || post.status === "scheduled"
-      : false;
-
-  // ── Realtime suggestions (voice-constrained) ───────────────────────────
-  const {
-    getSuggestion,
-    getReplacementSuggestion,
-    cancelGhost,
-    cancelReplacement,
-  } = useRealtimeSuggestions({
-    orgId: org?._id,
-    postId: typedPostId,
-    enabled: isEditable,
-  });
-
-  // ── Autosave (lightweight — no revision created) ────────────────────────
+  // ── Autosave ───────────────────────────────────────────────────────────
   const { status: autosaveStatus, scheduleSave } = useAutosave({
     onSave: async (payload) => {
       const p = postRef.current;
       if (!p) return;
-      await saveDraft({
+      await updatePost({
         postId: p._id,
         title: payload.title.trim(),
         body: payload.body,
+        aiSource: appliedAiSourceRef.current ?? undefined,
       });
       setServerTitle(payload.title.trim());
       setServerBody(payload.body);
+      setPreApplyBody(null);
+      setAppliedAiSource(null);
     },
     debounceMs: 600,
   });
@@ -330,6 +686,7 @@ export default function EditPostPage() {
     return <p className="text-gray-600">Post not found or access denied.</p>;
   }
 
+  const isEditable = post.status === "draft" || post.status === "scheduled";
   const canRefine = isEditable && !isDirty && !suggestion && !refiningMode;
 
   // ── Remaining handlers ─────────────────────────────────────────────────
@@ -338,13 +695,16 @@ export default function EditPostPage() {
     setIsSaving(true);
     setError("");
     try {
-      await saveDraft({
+      await updatePost({
         postId: post._id,
         title: title.trim(),
         body: body.trim(),
+        aiSource: appliedAiSource ?? undefined,
       });
       setServerTitle(title.trim());
       setServerBody(body.trim());
+      setPreApplyBody(null);
+      setAppliedAiSource(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");
     } finally {
@@ -356,15 +716,14 @@ export default function EditPostPage() {
     setIsPublishing(true);
     setError("");
     try {
-      // Save any pending changes before publishing
       if (isDirty) {
-        await saveDraft({
+        await updatePost({
           postId: post._id,
           title: title.trim(),
           body: body.trim(),
+          aiSource: appliedAiSource ?? undefined,
         });
       }
-      // publishPost creates a "publish" checkpoint internally
       await publishPost({ postId: post._id });
       router.push(`/app/${orgSlug}/posts`);
     } catch (err) {
@@ -387,9 +746,8 @@ export default function EditPostPage() {
     }
   };
 
-  const handleApplySuggestion = async (text: string, wasPartialApply?: boolean) => {
+  const handleApplySuggestion = (text: string, wasPartialApply?: boolean) => {
     if (!suggestion || !post) return;
-
     // Record preference signal (bounded nudge, does NOT mutate voice profile)
     recordPreferenceSignals({
       orgId: post.orgId,
@@ -399,37 +757,14 @@ export default function EditPostPage() {
       originalText: suggestion.originalText,
       appliedText: text,
     }).catch(() => {}); // Non-blocking
-
-    const aiMeta = {
+    setPreApplyBody(body);
+    setBody(text);
+    setAppliedAiSource({
       operationType: suggestion.mode,
       provider: suggestion.provider,
       model: suggestion.model,
-    };
-
-    setPreApplyBody(body);
-    setBody(text);
-    setAppliedAiSource(aiMeta);
+    });
     setSuggestion(null);
-
-    // Save draft + create "apply" checkpoint (non-blocking for UI)
-    saveDraft({
-      postId: post._id,
-      title: title.trim(),
-      body: text,
-    })
-      .then(() =>
-        createCheckpoint({
-          postId: post._id,
-          source: "ai",
-          aiMetadata: aiMeta,
-        })
-      )
-      .then(() => {
-        setServerTitle(title.trim());
-        setServerBody(text);
-        setAppliedAiSource(null);
-      })
-      .catch(() => {}); // Autosave will catch up if this fails
 
     // A4.3: Show "Applied" confirmation, then fade
     setShowAppliedConfirm(true);
@@ -579,7 +914,7 @@ export default function EditPostPage() {
           </div>
         ) : initialised ? (
           <div
-            className={`min-h-[280px] ${
+            className={`border border-gray-200 rounded-lg px-4 py-3 min-h-[280px] ${
               showAppliedConfirm ? "animate-ink-settle" : ""
             }`}
           >
@@ -592,21 +927,6 @@ export default function EditPostPage() {
               }}
               readonly={!isEditable && post.status !== "published"}
               placeholder="Start writing…"
-              ghostText={{
-                enabled: isEditable,
-                getSuggestion,
-                cancelSuggestion: cancelGhost,
-                pauseDelay: 900,
-                prefetchDelay: 300,
-                throttleInterval: 2000,
-              }}
-              inlineReplacement={{
-                enabled: isEditable,
-                getReplacementSuggestion,
-                cancelReplacementSuggestion: cancelReplacement,
-                pauseDelay: 1100,
-                throttleInterval: 2000,
-              }}
             />
           </div>
         ) : null}
@@ -725,179 +1045,61 @@ export default function EditPostPage() {
       {/* ── Revision history ─────────────────────────────────────────── */}
       {revisions && revisions.length > 0 && (
         <div className="mt-10 border-t border-gray-200 pt-6">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold text-gray-700">
-              Revision History
-            </h2>
-            {isEditable && !milestonePrompt && (
-              <button
-                type="button"
-                onClick={() => setMilestonePrompt(true)}
-                className="text-xs text-gray-500 hover:text-gray-700 hover:bg-gray-100 px-2 py-1 rounded"
-              >
-                Pin milestone
-              </button>
-            )}
-          </div>
-
-          {/* ── Create milestone prompt ──────────────────────────────── */}
-          {milestonePrompt && (
-            <div className="flex items-center gap-2 mb-3 p-3 bg-gray-50 border border-gray-200 rounded-md">
-              <input
-                type="text"
-                value={milestoneName}
-                onChange={(e) => setMilestoneName(e.target.value)}
-                placeholder="Milestone name (optional)"
-                className="flex-1 text-sm border border-gray-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-gray-400"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    setIsCreatingMilestone(true);
-                    createMilestone({
-                      postId: post._id,
-                      name: milestoneName.trim() || undefined,
-                    })
-                      .then(() => {
-                        setMilestonePrompt(false);
-                        setMilestoneName("");
-                      })
-                      .catch((err) =>
-                        setError(err instanceof Error ? err.message : "Failed to create milestone")
-                      )
-                      .finally(() => setIsCreatingMilestone(false));
-                  }
-                  if (e.key === "Escape") {
-                    setMilestonePrompt(false);
-                    setMilestoneName("");
-                  }
-                }}
-              />
-              <button
-                type="button"
-                disabled={isCreatingMilestone}
-                onClick={() => {
-                  setIsCreatingMilestone(true);
-                  createMilestone({
-                    postId: post._id,
-                    name: milestoneName.trim() || undefined,
-                  })
-                    .then(() => {
-                      setMilestonePrompt(false);
-                      setMilestoneName("");
-                    })
-                    .catch((err) =>
-                      setError(err instanceof Error ? err.message : "Failed to create milestone")
-                    )
-                    .finally(() => setIsCreatingMilestone(false));
-                }}
-                className="text-xs px-3 py-1.5 bg-gray-800 text-white rounded hover:bg-gray-900 disabled:opacity-50"
-              >
-                {isCreatingMilestone ? "Saving…" : "Pin"}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMilestonePrompt(false);
-                  setMilestoneName("");
-                }}
-                className="text-xs px-2 py-1.5 text-gray-500 hover:text-gray-700"
-              >
-                Cancel
-              </button>
-            </div>
-          )}
-
-          {/* ── Revision list ────────────────────────────────────────── */}
+          <h2 className="text-sm font-semibold text-gray-700 mb-3">
+            Revision History
+          </h2>
           <div className="space-y-2">
-            {(() => {
-              const milestones = revisions.filter((r) => r.isPinned);
-              const checkpoints = revisions.filter((r) => !r.isPinned);
-              const hasMilestones = milestones.length > 0;
+            {revisions.map((rev) => {
+              const isActive = rev._id === post.activeRevisionId;
 
               return (
-                <>
-                  {hasMilestones && (
-                    <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mt-1 mb-1">
-                      Milestones
+                <div
+                  key={rev._id}
+                  className={`flex items-start gap-3 text-sm p-3 rounded-md border ${
+                    isActive
+                      ? "bg-blue-50 border-blue-200"
+                      : "bg-gray-50 border-gray-100"
+                  }`}
+                >
+                  <span
+                    className={`shrink-0 mt-0.5 px-2 py-0.5 rounded text-xs font-medium ${
+                      rev.source === "ai"
+                        ? "bg-purple-100 text-purple-700"
+                        : rev.source === "initial"
+                          ? "bg-blue-100 text-blue-700"
+                          : rev.source === "restore"
+                            ? "bg-orange-100 text-orange-700"
+                            : "bg-gray-200 text-gray-600"
+                    }`}
+                  >
+                    {rev.source === "ai"
+                      ? rev.aiMetadata?.operationType ?? "ai"
+                      : rev.source}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-gray-600 truncate">{rev.bodyPreview}</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      Rev {rev.revisionNumber} ·{" "}
+                      {new Date(rev.createdAt).toLocaleString()}
+                      {isActive && (
+                        <span className="ml-2 text-blue-600 font-medium">
+                          active
+                        </span>
+                      )}
                     </p>
+                  </div>
+                  {!isActive && isEditable && (
+                    <button
+                      type="button"
+                      onClick={() => handleRestore(rev._id)}
+                      className="shrink-0 text-xs text-gray-500 hover:text-gray-700 hover:underline"
+                    >
+                      Restore
+                    </button>
                   )}
-                  {milestones.map((rev) => (
-                    <RevisionRow
-                      key={rev._id}
-                      rev={rev}
-                      isActive={rev._id === post.activeRevisionId}
-                      isEditable={isEditable}
-                      editingMilestoneId={editingMilestoneId}
-                      editingMilestoneName={editingMilestoneName}
-                      onRestore={handleRestore}
-                      onUnpin={(id) =>
-                        unpinMilestoneMut({ revisionId: id }).catch((err) =>
-                          setError(err instanceof Error ? err.message : "Failed to unpin")
-                        )
-                      }
-                      onPin={(id) =>
-                        pinRevisionMut({ revisionId: id }).catch((err) =>
-                          setError(err instanceof Error ? err.message : "Failed to pin")
-                        )
-                      }
-                      onStartRename={(id, currentName) => {
-                        setEditingMilestoneId(id);
-                        setEditingMilestoneName(currentName);
-                      }}
-                      onCommitRename={(id, name) => {
-                        renameMilestoneMut({ revisionId: id, name })
-                          .then(() => setEditingMilestoneId(null))
-                          .catch((err) =>
-                            setError(err instanceof Error ? err.message : "Failed to rename")
-                          );
-                      }}
-                      onCancelRename={() => setEditingMilestoneId(null)}
-                      setEditingMilestoneName={setEditingMilestoneName}
-                    />
-                  ))}
-                  {hasMilestones && checkpoints.length > 0 && (
-                    <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mt-3 mb-1">
-                      Checkpoints
-                    </p>
-                  )}
-                  {checkpoints.map((rev) => (
-                    <RevisionRow
-                      key={rev._id}
-                      rev={rev}
-                      isActive={rev._id === post.activeRevisionId}
-                      isEditable={isEditable}
-                      editingMilestoneId={editingMilestoneId}
-                      editingMilestoneName={editingMilestoneName}
-                      onRestore={handleRestore}
-                      onUnpin={(id) =>
-                        unpinMilestoneMut({ revisionId: id }).catch((err) =>
-                          setError(err instanceof Error ? err.message : "Failed to unpin")
-                        )
-                      }
-                      onPin={(id) =>
-                        pinRevisionMut({ revisionId: id }).catch((err) =>
-                          setError(err instanceof Error ? err.message : "Failed to pin")
-                        )
-                      }
-                      onStartRename={(id, currentName) => {
-                        setEditingMilestoneId(id);
-                        setEditingMilestoneName(currentName);
-                      }}
-                      onCommitRename={(id, name) => {
-                        renameMilestoneMut({ revisionId: id, name })
-                          .then(() => setEditingMilestoneId(null))
-                          .catch((err) =>
-                            setError(err instanceof Error ? err.message : "Failed to rename")
-                          );
-                      }}
-                      onCancelRename={() => setEditingMilestoneId(null)}
-                      setEditingMilestoneName={setEditingMilestoneName}
-                    />
-                  ))}
-                </>
+                </div>
               );
-            })()}
+            })}
           </div>
         </div>
       )}
@@ -905,155 +1107,371 @@ export default function EditPostPage() {
   );
 }
 
-// ── Revision row component ────────────────────────────────────────────────────
+```
 
-type RevisionData = {
-  _id: Id<"postRevisions">;
-  revisionNumber: number;
-  source: string;
-  aiMetadata?: { provider: string; model: string; operationType: string; prompt?: string } | null;
-  titleSnapshot?: string | null;
-  isPinned: boolean;
-  name?: string | null;
-  createdAt: number;
-  bodyPreview: string;
-};
+---
 
-function RevisionRow({
-  rev,
-  isActive,
-  isEditable,
-  editingMilestoneId,
-  editingMilestoneName,
-  onRestore,
-  onUnpin,
-  onPin,
-  onStartRename,
-  onCommitRename,
-  onCancelRename,
-  setEditingMilestoneName,
-}: {
-  rev: RevisionData;
-  isActive: boolean;
-  isEditable: boolean;
-  editingMilestoneId: Id<"postRevisions"> | null;
-  editingMilestoneName: string;
-  onRestore: (id: Id<"postRevisions">) => void;
-  onUnpin: (id: Id<"postRevisions">) => void;
-  onPin: (id: Id<"postRevisions">) => void;
-  onStartRename: (id: Id<"postRevisions">, currentName: string) => void;
-  onCommitRename: (id: Id<"postRevisions">, name: string) => void;
-  onCancelRename: () => void;
-  setEditingMilestoneName: (name: string) => void;
-}) {
-  const isEditing = editingMilestoneId === rev._id;
 
-  const sourceBadge = (() => {
-    if (rev.isPinned) return { label: rev.name || "Milestone", className: "bg-yellow-100 text-yellow-800" };
-    switch (rev.source) {
-      case "ai":
-        return { label: rev.aiMetadata?.operationType ?? "ai", className: "bg-purple-100 text-purple-700" };
-      case "initial":
-        return { label: "initial", className: "bg-blue-100 text-blue-700" };
-      case "restore":
-        return { label: "restore", className: "bg-orange-100 text-orange-700" };
-      case "publish":
-        return { label: "publish", className: "bg-green-100 text-green-700" };
-      case "milestone":
-        return { label: rev.name || "milestone", className: "bg-yellow-100 text-yellow-800" };
-      default:
-        return { label: rev.source, className: "bg-gray-200 text-gray-600" };
-    }
-  })();
+## 4. Editor Hooks & Utilities
 
-  return (
-    <div
-      className={`flex items-start gap-3 text-sm p-3 rounded-md border ${
-        rev.isPinned
-          ? "bg-yellow-50 border-yellow-200"
-          : isActive
-            ? "bg-gray-100 border-gray-300"
-            : "bg-gray-50 border-gray-100"
-      }`}
-    >
-      <span
-        className={`shrink-0 mt-0.5 px-2 py-0.5 rounded text-xs font-medium ${sourceBadge.className}`}
-      >
-        {isEditing ? (
-          <input
-            type="text"
-            value={editingMilestoneName}
-            onChange={(e) => setEditingMilestoneName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                onCommitRename(rev._id, editingMilestoneName);
-              }
-              if (e.key === "Escape") onCancelRename();
-            }}
-            onBlur={() => onCommitRename(rev._id, editingMilestoneName)}
-            className="bg-transparent border-0 outline-none text-xs font-medium w-24 p-0"
-            autoFocus
-          />
-        ) : (
-          sourceBadge.label
-        )}
-      </span>
+### `lib/useUnsavedChanges.ts`
 
-      <div className="min-w-0 flex-1">
-        <p className="text-gray-600 truncate">{rev.bodyPreview}</p>
-        <p className="text-xs text-gray-400 mt-1">
-          Rev {rev.revisionNumber} ·{" "}
-          {new Date(rev.createdAt).toLocaleString()}
-          {isActive && (
-            <span className="ml-2 text-gray-600 font-medium">active</span>
-          )}
-        </p>
-      </div>
+```ts
+"use client";
 
-      <div className="shrink-0 flex items-center gap-2">
-        {rev.isPinned && isEditable && (
-          <>
-            {!isEditing && (
-              <button
-                type="button"
-                onClick={() => onStartRename(rev._id, rev.name || "")}
-                className="text-xs text-gray-400 hover:text-gray-600"
-                title="Rename milestone"
-              >
-                Rename
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => onUnpin(rev._id)}
-              className="text-xs text-gray-400 hover:text-gray-600"
-              title="Unpin milestone"
-            >
-              Unpin
-            </button>
-          </>
-        )}
-        {!rev.isPinned && isEditable && rev.source !== "initial" && (
-          <button
-            type="button"
-            onClick={() => onPin(rev._id)}
-            className="text-xs text-gray-400 hover:text-gray-600"
-            title="Pin as milestone"
-          >
-            Pin
-          </button>
-        )}
-        {!isActive && isEditable && (
-          <button
-            type="button"
-            onClick={() => onRestore(rev._id)}
-            className="text-xs text-gray-500 hover:text-gray-700 hover:underline"
-          >
-            Restore
-          </button>
-        )}
-      </div>
-    </div>
-  );
+import { useEffect, useCallback } from "react";
+
+/**
+ * Guard against accidental data loss when the editor has unsaved changes.
+ *
+ * - Registers a `beforeunload` handler that triggers the browser's native
+ *   "Leave site?" dialog on tab close, refresh, or external navigation.
+ *
+ * - Returns a `confirmLeave` helper that components can call before
+ *   in-app navigation (e.g., the Back button) to show a confirm dialog.
+ *
+ * Modern browsers ignore custom `beforeunload` messages for security
+ * reasons, but still show a generic prompt when `e.preventDefault()`
+ * is called.
+ */
+export function useUnsavedChanges(isDirty: boolean) {
+  useEffect(() => {
+    if (!isDirty) return;
+
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
+  const confirmLeave = useCallback((): boolean => {
+    if (!isDirty) return true;
+    return window.confirm(
+      "You have unsaved changes. Are you sure you want to leave?"
+    );
+  }, [isDirty]);
+
+  return { confirmLeave };
 }
+
+```
+
+---
+
+### `lib/markdown.ts`
+
+```ts
+/**
+ * Markdown utilities for non-editor contexts (e.g. public post rendering).
+ * The Tiptap editor uses @tiptap/markdown for parse/serialize during editing.
+ */
+
+import { marked } from "marked";
+
+/**
+ * Convert markdown to HTML for display.
+ * Used on the public post page where there is no Tiptap editor.
+ */
+export function markdownToHtml(markdown: string): string {
+  if (!markdown?.trim()) return "";
+  return marked.parse(markdown, {
+    gfm: true,
+    breaks: true,
+  }) as string;
+}
+
+```
+
+---
+
+
+## 5. CSS & Animations
+
+### `app/globals.css`
+
+```css
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-instrument-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── A4.3 Refinement Polish Animations ──────────────────────────────────── */
+
+/* Pen wiggle: slow, minimal rotation fulcrumed on the pen tip */
+@keyframes pen-wiggle {
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(3deg); }
+  50%  { transform: rotate(0deg); }
+  75%  { transform: rotate(-3deg); }
+  100% { transform: rotate(0deg); }
+}
+
+/* Skeleton shimmer for placeholder cards */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    #f3f4f6 25%,
+    #e5e7eb 37%,
+    #f3f4f6 63%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* Card swap: subtle vertical slide for suggestion transitions */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-card-enter {
+  animation: card-enter 150ms ease-out forwards;
+}
+
+/* Ink settle: gentle opacity sweep for apply confirmation */
+@keyframes ink-settle {
+  0% { opacity: 0.6; }
+  40% { opacity: 1; }
+  100% { opacity: 0.85; }
+}
+
+.animate-ink-settle {
+  animation: ink-settle 600ms ease-out forwards;
+}
+
+/* Applied confirmation fade-in then fade-out */
+@keyframes applied-fade {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.animate-applied-fade {
+  animation: applied-fade 2s ease-out forwards;
+}
+
+/* Highlight fade: diff highlights fade to 60% after settling */
+@keyframes highlight-fade {
+  0% { opacity: 1; }
+  100% { opacity: 0.6; }
+}
+
+.diff-highlight-fade {
+  animation: highlight-fade 400ms ease-out 3s forwards;
+}
+
+.diff-highlight-fade:hover {
+  opacity: 1 !important;
+  transition: opacity 120ms ease-out;
+}
+
+/* Trust badge fade-out */
+@keyframes trust-badge-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.animate-trust-badge {
+  animation: trust-badge-fade 5s ease-out forwards;
+}
+
+/* Button microinteractions */
+.btn-micro {
+  transition: transform 120ms ease-out, opacity 120ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.btn-micro:hover:not(:disabled) {
+  transform: scale(1.02);
+}
+
+.btn-micro:active:not(:disabled) {
+  transform: scale(0.98);
+  opacity: 0.9;
+}
+
+/* ── Penrose Editor (Tiptap) ────────────────────────────────────────────── */
+
+.prose-editor {
+  line-height: 1.75;
+}
+
+.prose-editor p {
+  margin-bottom: 0.75em;
+}
+
+.prose-editor p:last-child {
+  margin-bottom: 0;
+}
+
+.prose-editor h1 {
+  font-size: 1.75rem;
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+}
+
+.prose-editor h1:first-child {
+  margin-top: 0;
+}
+
+.prose-editor h2 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+  line-height: 1.35;
+}
+
+.prose-editor h3 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+  line-height: 1.4;
+}
+
+.prose-editor ul,
+.prose-editor ol {
+  margin: 0.75em 0;
+  padding-left: 1.5em;
+}
+
+.prose-editor li {
+  margin-bottom: 0.25em;
+}
+
+.prose-editor blockquote {
+  border-left: 3px solid #e5e7eb;
+  padding-left: 1em;
+  margin: 1em 0;
+  color: #4b5563;
+}
+
+.prose-editor code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+  background: #f3f4f6;
+  padding: 0.15em 0.35em;
+  border-radius: 0.25rem;
+}
+
+.prose-editor a {
+  color: #374151;
+  text-decoration: underline;
+}
+
+.prose-editor a:hover {
+  color: #111827;
+}
+
+.prose-editor hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 1.5em 0;
+}
+
+.prose-editor .tiptap p.is-editor-empty:first-child::before {
+  color: #9ca3af;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+```
+
+---
+
+
+## 6. Dependencies
+
+### `package.json`
+
+```json
+{
+  "name": "penrose-app",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "convex:dev": "convex dev",
+    "calibrate:voice": "npx tsx scripts/voice-calibration/run-calibration.ts",
+    "calibrate:voice:dry": "SKIP_EMBEDDINGS=true npx tsx scripts/voice-calibration/run-calibration.ts",
+    "validate:multi-variant": "npx tsx scripts/voice-calibration/validate-multi-variant.ts",
+    "regression": "npx tsx scripts/voice-calibration/run-regression.ts",
+    "regression:baseline": "npx tsx scripts/voice-calibration/run-regression.ts --save-baseline"
+  },
+  "dependencies": {
+    "@auth/core": "^0.37.0",
+    "@convex-dev/auth": "^0.0.90",
+    "@tiptap/extension-link": "^3.19.0",
+    "@tiptap/extension-placeholder": "^3.19.0",
+    "@tiptap/markdown": "^3.19.0",
+    "@tiptap/pm": "^3.19.0",
+    "@tiptap/react": "^3.19.0",
+    "@tiptap/starter-kit": "^3.19.0",
+    "diff": "^8.0.3",
+    "marked": "^17.0.2",
+    "next": "16.1.6",
+    "next-auth": "^5.0.0-beta.30",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "convex": "^1.31.7",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
+
+```
+
+---
+

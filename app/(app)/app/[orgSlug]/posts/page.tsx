@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import Link from "next/link";
 import { api } from "@/convex/_generated/api";
@@ -13,6 +13,7 @@ type StatusFilter = (typeof STATUSES)[number];
 
 export default function PostsListPage() {
   const { orgSlug } = useParams<{ orgSlug: string }>();
+  const router = useRouter();
   const org = useOrgBySlug(orgSlug);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [isCreatingSite, setIsCreatingSite] = useState(false);
@@ -135,13 +136,15 @@ export default function PostsListPage() {
           {posts.map((post) => (
             <div
               key={post._id}
-              className="p-4 flex items-center justify-between"
+              className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors"
+              onClick={() => router.push(`/app/${orgSlug}/posts/${post._id}/edit`)}
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <Link
                     href={`/app/${orgSlug}/posts/${post._id}/edit`}
                     className="font-medium truncate hover:underline"
+                    onClick={(e) => e.stopPropagation()}
                   >
                     {post.title}
                   </Link>
@@ -166,6 +169,7 @@ export default function PostsListPage() {
                 <Link
                   href={`/app/${orgSlug}/posts/${post._id}/edit`}
                   className="text-sm text-gray-600 hover:underline"
+                  onClick={(e) => e.stopPropagation()}
                 >
                   Edit
                 </Link>
@@ -175,6 +179,7 @@ export default function PostsListPage() {
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-sm text-gray-600 hover:underline"
+                    onClick={(e) => e.stopPropagation()}
                   >
                     View →
                   </a>

@@ -11,6 +11,9 @@ import {
   EditorialMode,
   augmentPromptWithPreferences,
 } from "./lib/prompts";
+import {
+  buildPreferencePromptSuffix,
+} from "./lib/preferenceSignals";
 import { NUDGE_DIRECTIONS, NudgeDirection } from "./lib/nudges";
 import {
   buildConstraintBoostSuffix,
@@ -214,9 +217,23 @@ async function runSingleCandidateRefinement(
   const model = process.env.AI_MODEL ?? "gpt-4o-mini";
   const modeConfig = EDITORIAL_MODES[mode];
 
+  let preferenceSuffix = "";
+  if (orgId) {
+    try {
+      const prefs = await ctx.runQuery(
+        api.voicePreferenceSignals.getAggregatedPreferences,
+        { orgId, userId: userInfo.userId, editorialMode: mode }
+      );
+      preferenceSuffix = buildPreferencePromptSuffix(prefs) ?? "";
+    } catch {
+      // Non-blocking
+    }
+  }
+
   let systemPrompt = augmentPromptWithPreferences(
     modeConfig.systemPrompt,
-    scratchpad
+    scratchpad,
+    preferenceSuffix || undefined
   );
 
   if (nudgeDirection) {

@@ -6,8 +6,10 @@ import { api } from "@/convex/_generated/api";
 
 export default function RegressionPage() {
   const isDev = process.env.NEXT_PUBLIC_VOICE_ENGINE_DEBUG === "true";
-  const baseline = useQuery(api.voiceRegression.getBaseline);
-  const recentRuns = useQuery(api.voiceRegression.getRecentRuns, { limit: 5 });
+  const baseline = useQuery(api.voiceRegressionData.getBaseline);
+  const recentRuns = useQuery(api.voiceRegressionData.getRecentRuns, {
+    limit: 5,
+  });
   const runRegression = useAction(api.voiceRegression.runRegressionAction);
   const saveBaseline = useAction(api.voiceRegression.saveBaselineFromRun);
 

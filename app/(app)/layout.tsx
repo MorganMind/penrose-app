@@ -8,7 +8,7 @@ import { api } from "@/convex/_generated/api";
 import { UserMenu } from "./components/UserMenu";
 import { OrgSwitcher } from "./components/OrgSwitcher";
 import { OnboardingRecovery } from "./components/OnboardingRecovery";
-import { RestartOnboardingButton } from "./components/RestartOnboardingButton";
+
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const params = useParams();
@@ -36,7 +36,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen">
       <OnboardingRecovery />
-      <RestartOnboardingButton />
+
       <header className="border-b border-gray-200 p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">

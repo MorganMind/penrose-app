@@ -1,15 +1,13 @@
 "use node";
 
 /**
- * Voice regression suite — Convex integration.
+ * Voice regression suite — actions only.
  *
- * Stores baseline, runs static regression, compares to baseline,
- * and records run history. Used by the run-regression script and
- * the internal admin route.
+ * Queries/mutations are in voiceRegressionData.ts (Convex "use node"
+ * files can only export actions).
  */
 
 import { action, internalAction } from "./_generated/server";
-import { internalMutation, internalQuery, query } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { createHash } from "crypto";
@@ -27,12 +25,11 @@ import {
 import { getEmbeddings, embeddingCosineSimilarity } from "./lib/embeddings";
 import type { EditorialMode } from "./lib/voiceTypes";
 
-// ── Config hash (prompts + weights + model) ────────────────────────────────
+// ── Config hash ────────────────────────────────────────────────────────────
 
 function computeConfigHash(): string {
   const model = process.env.AI_MODEL ?? "gpt-4o-mini";
   const provider = process.env.AI_PROVIDER ?? "openai";
-
   const payload = JSON.stringify({
     weights: {
       line: getWeightsForMode("line"),
@@ -54,7 +51,7 @@ function computeConfigHash(): string {
   return createHash("sha256").update(payload).digest("hex").slice(0, 16);
 }
 
-// ── Static scoring (no LLM) ───────────────────────────────────────────────
+// ── Static scoring ──────────────────────────────────────────────────────────
 
 type StaticResult = {
   goodWinRate: number;
@@ -137,17 +134,6 @@ async function runStaticRegression(
 
   const total = results.length;
   const goodWins = results.filter((r) => r.goodWins).length;
-  const falseNegatives = total - goodWins;
-
-  const goodSem = results.map((r) => r.goodScores.semantic);
-  const goodSty = results.map((r) => r.goodScores.stylistic);
-  const goodScp = results.map((r) => r.goodScores.scope);
-  const goodCmb = results.map((r) => r.goodScores.combined);
-  const badSem = results.map((r) => r.badScores.semantic);
-  const badSty = results.map((r) => r.badScores.stylistic);
-  const badScp = results.map((r) => r.badScores.scope);
-  const badCmb = results.map((r) => r.badScores.combined);
-
   const mean = (arr: number[]) =>
     arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
 
@@ -164,108 +150,21 @@ async function runStaticRegression(
 
   return {
     goodWinRate: goodWins / total,
-    falseNegatives,
+    falseNegatives: total - goodWins,
     total,
-    meanSemanticGood: mean(goodSem),
-    meanStylisticGood: mean(goodSty),
-    meanScopeGood: mean(goodScp),
-    meanCombinedGood: mean(goodCmb),
-    meanSemanticBad: mean(badSem),
-    meanStylisticBad: mean(badSty),
-    meanScopeBad: mean(badScp),
-    meanCombinedBad: mean(badCmb),
+    meanSemanticGood: mean(results.map((r) => r.goodScores.semantic)),
+    meanStylisticGood: mean(results.map((r) => r.goodScores.stylistic)),
+    meanScopeGood: mean(results.map((r) => r.goodScores.scope)),
+    meanCombinedGood: mean(results.map((r) => r.goodScores.combined)),
+    meanSemanticBad: mean(results.map((r) => r.badScores.semantic)),
+    meanStylisticBad: mean(results.map((r) => r.badScores.stylistic)),
+    meanScopeBad: mean(results.map((r) => r.badScores.scope)),
+    meanCombinedBad: mean(results.map((r) => r.badScores.combined)),
     byMode,
   };
 }
 
-// ── Queries ────────────────────────────────────────────────────────────────
-
-export const getBaseline = query({
-  args: {},
-  handler: async (ctx) => {
-    await requireUser(ctx);
-    return await ctx.db
-      .query("voiceRegressionBaseline")
-      .order("desc")
-      .first();
-  },
-});
-
-export const getRecentRuns = query({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit = 10 }) => {
-    await requireUser(ctx);
-    return await ctx.db
-      .query("voiceRegressionRuns")
-      .order("desc")
-      .take(limit ?? 10);
-  },
-});
-
-// ── Internal: set baseline (called after manual verification) ──────────────
-
-/**
- * Save current run metrics as baseline (admin only).
- * Call after verifying a good run.
- */
-export const saveBaselineFromRun = action({
-  args: {
-    static: v.object({
-      goodWinRate: v.number(),
-      falseNegatives: v.number(),
-      total: v.number(),
-      meanSemanticGood: v.number(),
-      meanStylisticGood: v.number(),
-      meanScopeGood: v.number(),
-      meanCombinedGood: v.number(),
-      meanSemanticBad: v.number(),
-      meanStylisticBad: v.number(),
-      meanScopeBad: v.number(),
-      meanCombinedBad: v.number(),
-      byMode: v.optional(v.any()),
-    }),
-  },
-  handler: async (ctx, args) => {
-    await requireUser(ctx);
-    await ctx.runMutation(internal.voiceRegression.setBaseline, {
-      static: args.static,
-      createdBy: "admin",
-    });
-  },
-});
-
-export const setBaseline = internalMutation({
-  args: {
-    static: v.object({
-      goodWinRate: v.number(),
-      falseNegatives: v.number(),
-      total: v.number(),
-      meanSemanticGood: v.number(),
-      meanStylisticGood: v.number(),
-      meanScopeGood: v.number(),
-      meanCombinedGood: v.number(),
-      meanSemanticBad: v.number(),
-      meanStylisticBad: v.number(),
-      meanScopeBad: v.number(),
-      meanCombinedBad: v.number(),
-      byMode: v.optional(v.any()),
-    }),
-    live: v.optional(v.any()),
-    createdBy: v.optional(v.string()),
-  },
-  handler: async (ctx, args) => {
-    const configHash = computeConfigHash();
-    return await ctx.db.insert("voiceRegressionBaseline", {
-      configHash,
-      createdAt: Date.now(),
-      createdBy: args.createdBy,
-      static: args.static,
-      live: args.live,
-    });
-  },
-});
-
-// ── Action: run regression and compare to baseline ──────────────────────────
+// ── Actions ─────────────────────────────────────────────────────────────────
 
 const GATING_RULES = [
   { id: "good_win_rate", metric: "goodWinRate", minDrop: 0.05, floor: 0.85 },
@@ -275,15 +174,20 @@ const GATING_RULES = [
   { id: "mean_combined_good", metric: "meanCombinedGood", minDrop: 0.05, floor: 0.7 },
 ];
 
-/**
- * Public action to run regression (for admin route).
- * Calls the internal action and returns the result.
- */
 export const runRegressionAction = action({
   args: {
     skipEmbeddings: v.optional(v.boolean()),
   },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args
+  ): Promise<{
+    passed: boolean;
+    configHash: string;
+    static: StaticResult;
+    failures: Array<{ rule: string; baseline: number; current: number; threshold: string }>;
+    baseline: { configHash: string; createdAt: number; static: unknown } | null;
+  }> => {
     await requireUser(ctx);
     return await ctx.runAction(internal.voiceRegression.runRegression, {
       skipEmbeddings: args.skipEmbeddings ?? true,
@@ -295,12 +199,21 @@ export const runRegression = internalAction({
   args: {
     skipEmbeddings: v.optional(v.boolean()),
   },
-  handler: async (ctx, { skipEmbeddings = true }) => {
+  handler: async (
+    ctx,
+    { skipEmbeddings = true }
+  ): Promise<{
+    passed: boolean;
+    configHash: string;
+    static: StaticResult;
+    failures: Array<{ rule: string; baseline: number; current: number; threshold: string }>;
+    baseline: { configHash: string; createdAt: number; static: unknown } | null;
+  }> => {
     const configHash = computeConfigHash();
     const staticResult = await runStaticRegression(skipEmbeddings ?? true);
 
     const baseline = await ctx.runQuery(
-      internal.voiceRegression.getBaselineInternal
+      internal.voiceRegressionData.getBaselineInternal
     );
 
     const failures: Array<{
@@ -311,11 +224,11 @@ export const runRegression = internalAction({
     }> = [];
 
     if (baseline) {
+      const baseStatic = baseline.static as StaticResult;
       for (const rule of GATING_RULES) {
-        const baseVal = (baseline.static as Record<string, number>)[rule.metric];
-        const currVal = (staticResult as Record<string, number>)[rule.metric];
-        if (baseVal === undefined || currVal === undefined) continue;
-
+        const baseVal = baseStatic[rule.metric as keyof StaticResult];
+        const currVal = staticResult[rule.metric as keyof StaticResult];
+        if (typeof baseVal !== "number" || typeof currVal !== "number") continue;
         if (rule.minDrop != null && currVal < baseVal - rule.minDrop) {
           failures.push({
             rule: rule.id,
@@ -345,7 +258,7 @@ export const runRegression = internalAction({
 
     const passed = failures.length === 0;
 
-    await ctx.runMutation(internal.voiceRegression.recordRun, {
+    await ctx.runMutation(internal.voiceRegressionData.recordRun, {
       passed,
       configHash,
       staticOnly: true,
@@ -381,23 +294,8 @@ export const runRegression = internalAction({
   },
 });
 
-// ── Internal helpers ───────────────────────────────────────────────────────
-
-export const getBaselineInternal = internalQuery({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.db
-      .query("voiceRegressionBaseline")
-      .order("desc")
-      .first();
-  },
-});
-
-export const recordRun = internalMutation({
+export const saveBaselineFromRun = action({
   args: {
-    passed: v.boolean(),
-    configHash: v.string(),
-    staticOnly: v.boolean(),
     static: v.object({
       goodWinRate: v.number(),
       falseNegatives: v.number(),
@@ -406,22 +304,19 @@ export const recordRun = internalMutation({
       meanStylisticGood: v.number(),
       meanScopeGood: v.number(),
       meanCombinedGood: v.number(),
+      meanSemanticBad: v.number(),
+      meanStylisticBad: v.number(),
+      meanScopeBad: v.number(),
+      meanCombinedBad: v.number(),
+      byMode: v.optional(v.any()),
     }),
-    live: v.optional(v.any()),
-    failures: v.array(
-      v.object({
-        rule: v.string(),
-        baseline: v.number(),
-        current: v.number(),
-        threshold: v.string(),
-      })
-    ),
-    failuresDetail: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.insert("voiceRegressionRuns", {
-      ...args,
-      createdAt: Date.now(),
+    await requireUser(ctx);
+    await ctx.runMutation(internal.voiceRegressionData.setBaseline, {
+      configHash: computeConfigHash(),
+      static: args.static,
+      createdBy: "admin",
     });
   },
 });

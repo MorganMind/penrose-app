@@ -138,20 +138,29 @@ export const EDITORIAL_MODE_KEYS = Object.keys(
 ) as EditorialMode[];
 
 /**
- * Augment a base editorial prompt with the author's scratchpad preferences.
+ * Augment a base editorial prompt with the author's scratchpad and
+ * aggregated preference signals (from Apply/Reject/Hunk).
  *
- * The preferences are appended as a clearly delineated section so the
- * model treats them as authorial constraints, not editorial instructions.
- * Returns the base prompt unchanged if no preferences exist.
+ * Preference suffix is built from bounded nudges — it does NOT override
+ * voice constraints. Only applied when confidence is above threshold.
  */
 export function augmentPromptWithPreferences(
   basePrompt: string,
-  scratchpadContent?: string | null
+  scratchpadContent?: string | null,
+  preferenceSuffix?: string | null
 ): string {
-  if (!scratchpadContent?.trim()) return basePrompt;
+  let result = basePrompt;
 
-  return `${basePrompt}
+  if (scratchpadContent?.trim()) {
+    result += `
 
 AUTHOR'S STATED STYLE PREFERENCES (honor these where applicable — they reflect the author's intentional voice choices):
 ${scratchpadContent.trim()}`;
+  }
+
+  if (preferenceSuffix?.trim()) {
+    result += preferenceSuffix;
+  }
+
+  return result;
 }

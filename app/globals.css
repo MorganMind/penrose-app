@@ -24,3 +24,434 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 }
+
+/* ── A4.3 Refinement Polish Animations ──────────────────────────────────── */
+
+/* Pen wiggle: slow, minimal rotation fulcrumed on the pen tip */
+@keyframes pen-wiggle {
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(3deg); }
+  50%  { transform: rotate(0deg); }
+  75%  { transform: rotate(-3deg); }
+  100% { transform: rotate(0deg); }
+}
+
+/* Skeleton shimmer for placeholder cards */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    #f3f4f6 25%,
+    #e5e7eb 37%,
+    #f3f4f6 63%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* Card swap: subtle vertical slide for suggestion transitions */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-card-enter {
+  animation: card-enter 150ms ease-out forwards;
+}
+
+/* Ink settle: gentle opacity sweep for apply confirmation */
+@keyframes ink-settle {
+  0% { opacity: 0.6; }
+  40% { opacity: 1; }
+  100% { opacity: 0.85; }
+}
+
+.animate-ink-settle {
+  animation: ink-settle 600ms ease-out forwards;
+}
+
+/* Applied confirmation fade-in then fade-out */
+@keyframes applied-fade {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.animate-applied-fade {
+  animation: applied-fade 2s ease-out forwards;
+}
+
+/* Highlight fade: diff highlights fade to 60% after settling */
+@keyframes highlight-fade {
+  0% { opacity: 1; }
+  100% { opacity: 0.6; }
+}
+
+.diff-highlight-fade {
+  animation: highlight-fade 400ms ease-out 3s forwards;
+}
+
+.diff-highlight-fade:hover {
+  opacity: 1 !important;
+  transition: opacity 120ms ease-out;
+}
+
+/* Trust badge fade-out */
+@keyframes trust-badge-fade {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.animate-trust-badge {
+  animation: trust-badge-fade 5s ease-out forwards;
+}
+
+/* Button microinteractions */
+.btn-micro {
+  transition: transform 120ms ease-out, opacity 120ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.btn-micro:hover:not(:disabled) {
+  transform: scale(1.02);
+}
+
+.btn-micro:active:not(:disabled) {
+  transform: scale(0.98);
+  opacity: 0.9;
+}
+
+/* ── Penrose Editor (Tiptap) ────────────────────────────────────────────── */
+
+.prose-editor {
+  position: relative;
+  line-height: 1.75;
+}
+
+.prose-editor p {
+  margin-bottom: 0.75em;
+}
+
+.prose-editor p:last-child {
+  margin-bottom: 0;
+}
+
+.prose-editor h1 {
+  font-size: 1.75rem;
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+}
+
+.prose-editor h1:first-child {
+  margin-top: 0;
+}
+
+.prose-editor h2 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+  line-height: 1.35;
+}
+
+.prose-editor h3 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+  line-height: 1.4;
+}
+
+.prose-editor ul,
+.prose-editor ol {
+  margin: 0.75em 0;
+  padding-left: 1.5em;
+}
+
+.prose-editor li {
+  margin-bottom: 0.25em;
+}
+
+.prose-editor blockquote {
+  border-left: 3px solid #e5e7eb;
+  padding-left: 1em;
+  margin: 1em 0;
+  color: #4b5563;
+}
+
+.prose-editor code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+  background: #f3f4f6;
+  padding: 0.15em 0.35em;
+  border-radius: 0.25rem;
+}
+
+.prose-editor a {
+  color: #374151;
+  text-decoration: underline;
+}
+
+.prose-editor a:hover {
+  color: #111827;
+}
+
+.prose-editor hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 1.5em 0;
+}
+
+.prose-editor .tiptap p.is-editor-empty:first-child::before {
+  color: #9ca3af;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* ── Ghost Text Suggestions ─────────────────────────────────────────────── */
+
+/*
+ * Structure:
+ *   .ghost-text-wrapper          (inline container, pointer-events flow through)
+ *     .ghost-text                (suggestion text — pointer-events: none)
+ *     .ghost-hint [data-ghost-hint] (keycap label — clickable, pointer-events: auto)
+ *
+ * pointer-events approach:
+ *   wrapper: auto (default, so hint child is reachable)
+ *   .ghost-text: none (non-interactive suggestion text)
+ *   .ghost-hint: auto (clickable — handled by ProseMirror handleClick, not DOM listener)
+ */
+
+.ghost-text-wrapper {
+  display: inline;
+  user-select: none;
+  opacity: 1;
+  transition: opacity 150ms ease-out;
+}
+
+/* Fade-out when dismissing (Esc, click away) — 200ms */
+.ghost-text-wrapper.ghost-text-fading {
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+
+/* Suggestion text — visually subordinate, clickable for acceptance */
+.ghost-text {
+  color: currentColor;
+  opacity: 0.4;
+  font-style: italic;
+  font-weight: 300;
+  white-space: pre-wrap;
+}
+
+/* Tab keycap hint — delayed reveal for stability, hidden during fade-out */
+.ghost-hint {
+  display: inline-block;
+  margin-left: 0.4em;
+  padding: 0.05em 0.35em;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.04);
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-style: normal;
+  font-weight: 500;
+  font-size: 0.7em;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  vertical-align: baseline;
+  cursor: pointer;
+  user-select: none;
+  /* Start invisible, fade in after 200ms stabilisation delay */
+  opacity: 0;
+  animation: ghost-hint-reveal 120ms ease-out 200ms forwards;
+  transition: opacity 80ms ease-out;
+}
+
+.ghost-hint:hover {
+  opacity: 0.45;
+}
+
+/* Suppress hint entirely while fading out */
+.ghost-text-fading .ghost-hint {
+  animation: none;
+  opacity: 0;
+}
+
+@keyframes ghost-hint-reveal {
+  to {
+    opacity: 0.25;
+  }
+}
+
+/* ── Loading indicator (zero-width overlay at cursor) ───────────────────── */
+
+.ghost-loading {
+  display: inline-block;
+  position: relative;
+  width: 0;
+  overflow: visible;
+  pointer-events: none;
+  vertical-align: baseline;
+}
+
+.ghost-loading svg {
+  position: absolute;
+  left: 0.25em;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: #9ca3af;
+}
+
+/* Static icon for 100–500ms latency */
+.ghost-loading-icon svg {
+  opacity: 0.5;
+}
+
+/* Animated pen for >500ms latency */
+.ghost-loading-shimmer svg {
+  opacity: 0.6;
+  animation: pen-wiggle 2s ease-in-out infinite;
+  transform-origin: bottom right;
+}
+
+/* ── Accepted text highlight pulse (500ms fade) ─────────────────────────── */
+
+.ghost-accepted-highlight {
+  border-radius: 2px;
+  animation: ghost-highlight-pulse 500ms ease-out forwards;
+}
+
+@keyframes ghost-highlight-pulse {
+  0%   { background-color: rgba(156, 163, 175, 0.25); }
+  100% { background-color: transparent; }
+}
+
+/* ── Layout safety ──────────────────────────────────────────────────────── */
+
+.ProseMirror {
+  position: relative;
+}
+
+.ProseMirror .ghost-text-wrapper,
+.ProseMirror .ghost-loading {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Inline Replacement Suggestions ─────────────────────────────────────── */
+
+/*
+ * Structure:
+ *   .replacement-underline          (inline decoration on target word)
+ *   .replacement-tooltip            (positioned above word, contains suggestion)
+ *     .replacement-tooltip-text     (clickable replacement, data-replacement-accept)
+ *     .replacement-tooltip-reason   (optional rationale)
+ *
+ * Positioning: tooltip is a widget at word start, uses absolute positioning
+ * relative to ProseMirror's coordinate system.
+ */
+
+/* Subtle underline on target word */
+.replacement-underline {
+  text-decoration: underline;
+  text-decoration-color: #9ca3af;
+  text-decoration-style: solid;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  border-radius: 1px;
+  transition: text-decoration-color 120ms ease-out;
+}
+
+.replacement-underline:hover {
+  text-decoration-color: #6b7280;
+}
+
+.replacement-underline.replacement-fading {
+  text-decoration-color: transparent;
+  transition: text-decoration-color 100ms ease-out;
+}
+
+/* Tooltip container — anchored above the word */
+.replacement-tooltip {
+  position: absolute;
+  /* 4px above the text line */
+  transform: translateY(calc(-100% - 4px));
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 4px 8px;
+  background: #ffffff;
+  border-radius: 4px;
+  /* Soft shadow, no border */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08), 0 0px 1px rgba(0, 0, 0, 0.05);
+  /* Fade in */
+  animation: replacement-tooltip-in 100ms ease-out;
+  pointer-events: auto;
+  white-space: nowrap;
+  max-width: 280px;
+}
+
+.replacement-tooltip-fading {
+  opacity: 0;
+  transition: opacity 100ms ease-out;
+}
+
+@keyframes replacement-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(calc(-100% - 2px));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(calc(-100% - 4px));
+  }
+}
+
+/* Replacement text — clickable */
+.replacement-tooltip-text {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  line-height: 1.3;
+  transition: color 80ms ease-out;
+}
+
+.replacement-tooltip-text:hover {
+  color: #111827;
+}
+
+/* Optional reason — very quiet */
+.replacement-tooltip-reason {
+  font-size: 0.6875rem;
+  font-weight: 400;
+  color: #9ca3af;
+  line-height: 1.2;
+  pointer-events: none;
+}
+
+/* ── Inline Replacement layout coordination ─────────────────────────────── */
+
+/* Prevent tooltip from causing document reflow */
+.ProseMirror .replacement-tooltip {
+  /* Widget is inline in the flow but tooltip itself is pulled out */
+  line-height: 0;
+}

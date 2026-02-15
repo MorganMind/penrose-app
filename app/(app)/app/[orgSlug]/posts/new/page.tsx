@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useOrgBySlug } from "@/lib/useOrgBySlug";
+import { PenroseEditor } from "@/components/editor/PenroseEditor";
 
 export default function NewPostPage() {
   const { orgSlug } = useParams<{ orgSlug: string }>();
@@ -68,7 +69,7 @@ export default function NewPostPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-[680px] mx-auto">
       <h1 className="text-2xl font-semibold mb-6">New Post</h1>
 
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -97,14 +98,14 @@ export default function NewPostPage() {
           >
             Body <span className="text-gray-400 font-normal">(optional)</span>
           </label>
-          <textarea
-            id="body"
-            rows={10}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm font-mono"
-            placeholder="Write your post content here…"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-          />
+          <div className="border border-gray-300 rounded-md overflow-hidden">
+            <PenroseEditor
+              initialMarkdown={body}
+              onChangeMarkdown={setBody}
+              placeholder="Write your post content here…"
+              className="px-3 py-2 min-h-[200px]"
+            />
+          </div>
         </div>
 
         {error && (

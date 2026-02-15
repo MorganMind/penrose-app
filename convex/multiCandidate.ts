@@ -23,8 +23,8 @@
 
 import { internalAction } from "./_generated/server";
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import { api, internal } from "./_generated/api";
+import type { Id, Doc } from "./_generated/dataModel";
 import { callModel, promptVersionId } from "./lib/aiClient";
 import {
   EDITORIAL_MODES,
@@ -37,6 +37,9 @@ import { getVariationPair } from "./lib/candidateVariations";
 import {
   computeSelectionScore,
 } from "./lib/candidateSelection";
+import {
+  buildPreferencePromptSuffix,
+} from "./lib/preferenceSignals";
 import {
   classify,
   requiresEnforcement,
@@ -113,10 +116,29 @@ export const generate = internalAction({
     const model = process.env.AI_MODEL ?? "gpt-4o-mini";
     const promptVer = promptVersionId(modeConfig.systemPrompt);
 
+    // ── Fetch aggregated preference signals (bounded nudges from Apply/Reject) ─
+    let preferenceSuffix = "";
+    if (args.orgId) {
+      try {
+        const prefs = await ctx.runQuery(
+          api.voicePreferenceSignals.getAggregatedPreferences,
+          {
+            orgId: args.orgId,
+            userId: args.userId,
+            editorialMode: args.editorialMode,
+          }
+        );
+        preferenceSuffix = buildPreferencePromptSuffix(prefs) ?? "";
+      } catch {
+        // Non-blocking
+      }
+    }
+
     // ── Build base prompt ──────────────────────────────────────
     let basePrompt = augmentPromptWithPreferences(
       modeConfig.systemPrompt,
-      args.scratchpadContent
+      args.scratchpadContent,
+      preferenceSuffix || undefined
     );
 
     if (args.nudgeDirection) {
@@ -635,13 +657,16 @@ export const tryAgain = internalAction({
       { runId: args.runId }
     );
 
-    const unshown = allCandidates
+    type Candidate = Doc<"editorialCandidates">;
+    const unshown = (allCandidates as Candidate[])
       .filter(
-        (c) =>
+        (c: Candidate) =>
           !c.shown &&
           (c.enforcementClass === "pass" || c.enforcementClass === undefined)
       )
-      .sort((a, b) => b.selectionScore - a.selectionScore);
+      .sort(
+        (a: Candidate, b: Candidate) => b.selectionScore - a.selectionScore
+      );
 
     if (unshown.length > 0) {
       const next = unshown[0];

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import type { DiffResult } from "@/lib/diffUtils";
 import type { Hunk } from "@/lib/diffHunks";
 
@@ -16,6 +16,8 @@ type DiffHighlightViewProps = {
   onToggleRemovals: () => void;
   /** Fallback text shown while computing or on error. */
   suggestedText: string;
+  /** Used to reset highlight fade on new suggestions. */
+  suggestionIndex: number;
 };
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -23,10 +25,11 @@ type DiffHighlightViewProps = {
 /**
  * Pure rendering component for hunk-aware diff highlighting.
  *
- * Each hunk is numbered with a clickable chip. Clicking either the chip
- * or the highlighted change region toggles that hunk on/off.
- * When a hunk is OFF, its additions disappear and removals show as
- * plain text (the original wording).
+ * A4.3 visual rules:
+ * - Additions: soft green underline (not background block)
+ * - Removals: light red strikethrough
+ * - Highlights fade to 60% opacity after 3 seconds
+ * - On hover, highlights return to 100%
  */
 export function DiffHighlightView({
   result,
@@ -37,7 +40,22 @@ export function DiffHighlightView({
   showRemovals,
   onToggleRemovals,
   suggestedText,
+  suggestionIndex,
 }: DiffHighlightViewProps) {
+  // A4.3: Track when highlights should begin fading
+  const [highlightsFaded, setHighlightsFaded] = useState(false);
+  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Reset fade timer whenever suggestion changes
+  useEffect(() => {
+    setHighlightsFaded(false);
+    if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
+    fadeTimerRef.current = setTimeout(() => setHighlightsFaded(true), 3000);
+    return () => {
+      if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current);
+    };
+  }, [suggestionIndex]);
+
   // Build a fast lookup: changeIndex → hunkId
   const changeToHunk = useMemo(() => {
     const map = new Map<number, number>();
@@ -57,6 +75,11 @@ export function DiffHighlightView({
     }
     return set;
   }, [hunks]);
+
+  // A4.3: Fade class for diff highlights
+  const fadeClass = highlightsFaded
+    ? "opacity-60 hover:opacity-100 transition-opacity duration-150"
+    : "";
 
   const content = useMemo(() => {
     if (!result) return null;
@@ -87,6 +110,7 @@ export function DiffHighlightView({
           // Hunk disabled → skip the addition (revert to original)
           return chip ?? null;
         }
+        // A4.3: Soft green underline instead of background block
         return (
           <span key={i}>
             {chip}
@@ -94,7 +118,7 @@ export function DiffHighlightView({
               role="button"
               tabIndex={-1}
               onClick={() => onToggleHunk(hunkId)}
-              className="bg-gray-200/80 rounded-sm px-0.5 cursor-pointer hover:bg-gray-300/70 transition-colors"
+              className={`underline decoration-emerald-400/70 decoration-1 underline-offset-2 cursor-pointer hover:decoration-emerald-500 transition-colors ${fadeClass}`}
               style={{ boxDecorationBreak: "clone" }}
             >
               {c.value}
@@ -121,8 +145,9 @@ export function DiffHighlightView({
             </span>
           );
         }
-        // Hunk enabled → hide by default, strikethrough if showRemovals
+        // Hunk enabled → hide by default, light red strikethrough if showRemovals
         if (!showRemovals) return chip ?? null;
+        // A4.3: Light red strikethrough instead of harsh bg
         return (
           <span key={i}>
             {chip}
@@ -130,7 +155,7 @@ export function DiffHighlightView({
               role="button"
               tabIndex={-1}
               onClick={() => onToggleHunk(hunkId)}
-              className="line-through text-gray-400 bg-gray-100/60 rounded-sm px-0.5 cursor-pointer"
+              className={`line-through decoration-red-300/70 text-gray-400 cursor-pointer hover:text-gray-500 transition-colors ${fadeClass}`}
             >
               {c.value}
             </span>
@@ -140,12 +165,17 @@ export function DiffHighlightView({
 
       return <span key={i}>{c.value}</span>;
     });
-  }, [result, changeToHunk, firstIndexOfHunk, enabledHunks, onToggleHunk, showRemovals]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, changeToHunk, firstIndexOfHunk, enabledHunks, onToggleHunk, showRemovals, fadeClass]);
 
   // ── Loading / fallback ───────────────────────────────────────────────
   if (computing) {
     return (
-      <div className="text-sm text-gray-500 italic py-2">Computing diff…</div>
+      <div className="space-y-2.5 py-2">
+        <div className="h-3 rounded animate-shimmer w-full" />
+        <div className="h-3 rounded animate-shimmer w-10/12" />
+        <div className="h-3 rounded animate-shimmer w-11/12" />
+      </div>
     );
   }
 
@@ -170,6 +200,8 @@ export function DiffHighlightView({
       <div className="text-sm whitespace-pre-wrap font-mono leading-relaxed text-gray-800">
         {content}
       </div>
+      {/* A4.3: Trust signal badge — fades after a few seconds */}
+      <TrustBadge result={result} suggestionIndex={suggestionIndex} />
     </div>
   );
 }
@@ -195,7 +227,7 @@ function HunkChip({
       className={[
         "inline-flex items-center justify-center",
         "w-4 h-4 text-[10px] font-semibold leading-none rounded-full",
-        "mr-0.5 align-text-top select-none transition-colors",
+        "mr-0.5 align-text-top select-none btn-micro",
         enabled
           ? "bg-gray-800 text-white"
           : "bg-gray-200 text-gray-500 ring-1 ring-gray-300",
@@ -222,9 +254,7 @@ type OriginalDiffPaneProps = {
  * Renders the *original* text with removals highlighted.
  * Additions never appear here (they don't exist in the original).
  *
- * - Hunk ON  → removed text shown with strikethrough + muted bg
- *              (indicating it will be cut).
- * - Hunk OFF → removed text shown as normal (the removal is reverted).
+ * A4.3: Light red strikethrough for enabled removals (text being cut).
  */
 export function OriginalDiffPane({
   result,
@@ -263,14 +293,14 @@ export function OriginalDiffPane({
       // Removed token
       if (c.removed) {
         if (enabled) {
-          // Hunk enabled → this text IS being removed: show with strikethrough + muted
+          // Hunk enabled → this text IS being removed: light red strikethrough
           return (
             <span
               key={i}
               role="button"
               tabIndex={-1}
               onClick={() => onToggleHunk(hunkId)}
-              className="line-through text-gray-400 bg-gray-200/50 rounded-sm px-0.5 cursor-pointer hover:bg-gray-200/80 transition-colors"
+              className="line-through decoration-red-300/70 text-gray-400 cursor-pointer hover:text-gray-500 transition-colors"
             >
               {c.value}
             </span>
@@ -286,7 +316,11 @@ export function OriginalDiffPane({
 
   if (computing) {
     return (
-      <div className="text-sm text-gray-500 italic py-2">Computing diff…</div>
+      <div className="space-y-2.5 py-2">
+        <div className="h-3 rounded animate-shimmer w-full" />
+        <div className="h-3 rounded animate-shimmer w-10/12" />
+        <div className="h-3 rounded animate-shimmer w-11/12" />
+      </div>
     );
   }
 
@@ -305,7 +339,7 @@ export function OriginalDiffPane({
   );
 }
 
-// ── Change summary ─────────────────────────────────────────────────────────
+// ── Change summary (editorial tone) ─────────────────────────────────────────
 
 type ChangeSummaryProps = {
   result: DiffResult;
@@ -315,6 +349,11 @@ type ChangeSummaryProps = {
   onToggleRemovals: () => void;
 };
 
+/**
+ * A4.3: Editorial-tone change summary.
+ * e.g. "12 words tightened · cadence preserved"
+ * No emojis. No checkmarks. Just quiet clarity.
+ */
 export function ChangeSummary({
   result,
   hunks,
@@ -328,18 +367,12 @@ export function ChangeSummary({
 
   const enabledCount = hunks.filter((h) => enabledHunks.has(h.id)).length;
 
-  const parts: string[] = [];
-  if (addedCount > 0) parts.push(`~${addedCount} words added`);
-  if (removedCount > 0) parts.push(`~${removedCount} removed`);
+  // A4.3: Editorial-tone summary
+  const summaryText = buildEditorialSummary(addedCount, removedCount, label);
 
   return (
     <div className="flex items-center gap-3 flex-wrap text-xs text-gray-500 mb-2">
-      <span>{parts.join(", ")}</span>
-      {label && (
-        <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
-          Mainly {label}
-        </span>
-      )}
+      <span>{summaryText}</span>
       {hunks.length > 1 && (
         <span className="text-gray-400">
           {enabledCount}/{hunks.length} changes enabled
@@ -354,6 +387,72 @@ export function ChangeSummary({
           {showRemovals ? "Hide removals" : "Show removals"}
         </button>
       )}
+    </div>
+  );
+}
+
+/** Build an editorial-tone change summary string. */
+function buildEditorialSummary(
+  addedCount: number,
+  removedCount: number,
+  label: DiffResult["label"]
+): string {
+  const netChange = addedCount - removedCount;
+  const totalChanged = Math.max(addedCount, removedCount);
+
+  if (label === "tightened") {
+    return `${Math.abs(netChange)} words tightened · structure preserved`;
+  }
+  if (label === "expanded") {
+    return `${netChange} words added · clarity improved`;
+  }
+  if (label === "rephrased") {
+    return `${totalChanged} words rephrased · voice preserved`;
+  }
+
+  // Fallback
+  const parts: string[] = [];
+  if (addedCount > 0) parts.push(`${addedCount} added`);
+  if (removedCount > 0) parts.push(`${removedCount} removed`);
+  return parts.join(", ");
+}
+
+// ── Trust badge ─────────────────────────────────────────────────────────────
+
+function TrustBadge({
+  result,
+  suggestionIndex,
+}: {
+  result: DiffResult;
+  suggestionIndex: number;
+}) {
+  const [visible, setVisible] = useState(true);
+
+  // Reset visibility on new suggestion
+  useEffect(() => {
+    setVisible(true);
+    const timer = setTimeout(() => setVisible(false), 5000);
+    return () => clearTimeout(timer);
+  }, [suggestionIndex]);
+
+  if (!visible || !result.label) return null;
+
+  const message =
+    result.label === "rephrased"
+      ? "Voice preserved"
+      : result.label === "tightened"
+        ? "Meaning preserved"
+        : result.label === "expanded"
+          ? "Intent preserved"
+          : null;
+
+  if (!message) return null;
+
+  return (
+    <div className="mt-2 animate-trust-badge">
+      <span className="text-[11px] text-gray-400">
+        {message} ✓
+      </span>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { QueryCtx, MutationCtx } from "./_generated/server";
+import { QueryCtx, MutationCtx, ActionCtx } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { Id, Doc } from "./_generated/dataModel";
 
@@ -11,15 +11,16 @@ export type Role = (typeof ROLES)[number];
 
 /**
  * Ensure the request is from an authenticated user.
- * 
+ * Works with queries, mutations, and actions (via getAuthUserId).
+ *
  * @throws Error if user is not authenticated
  * @returns The authenticated user's ID
- * 
+ *
  * Usage:
  *   const userId = await requireUser(ctx);
  */
 export async function requireUser(
-  ctx: QueryCtx | MutationCtx
+  ctx: QueryCtx | MutationCtx | ActionCtx
 ): Promise<Id<"users">> {
   const userId = await getAuthUserId(ctx);
   

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useMemo, useState } from "react";
+import { useEffect, useCallback, useMemo, useState, useRef } from "react";
 import { EDITORIAL_MODES, EditorialMode } from "@/convex/lib/prompts";
 import { Id } from "@/convex/_generated/dataModel";
 import { ReactionPanel } from "./ReactionPanel";
@@ -30,7 +30,7 @@ type SuggestionDiffProps = {
   nudgeDirection?: string;
   hasAlternate?: boolean;
   /** Called with the final text to apply (selective or full). */
-  onApply: (text: string) => void;
+  onApply: (text: string, wasPartialApply?: boolean) => void;
   onReject: () => void;
   onNudge: (direction: NudgeDirection) => void;
   onTryAgain?: () => void;
@@ -98,6 +98,17 @@ export function SuggestionDiff({
     new Set<number>()
   );
 
+  // A4.3: Track suggestion index for card-swap animation
+  const [animKey, setAnimKey] = useState(0);
+  const prevSuggestionIndex = useRef(suggestionIndex);
+
+  useEffect(() => {
+    if (suggestionIndex !== prevSuggestionIndex.current) {
+      setAnimKey((k) => k + 1);
+      prevSuggestionIndex.current = suggestionIndex;
+    }
+  }, [suggestionIndex]);
+
   // Reset whenever the suggestion changes (try-again, nudge, new refinement)
   useEffect(() => {
     setEnabledHunks(allHunkIds(hunks));
@@ -127,8 +138,9 @@ export function SuggestionDiff({
 
   // ── Handlers ───────────────────────────────────────────────────────────
   const handleApply = useCallback(() => {
-    onApply(selectiveText);
-  }, [onApply, selectiveText]);
+    const wasPartial = !allEnabled && !noneEnabled;
+    onApply(selectiveText, wasPartial);
+  }, [onApply, selectiveText, allEnabled, noneEnabled]);
 
   // Fallback to side-by-side if diff computation fails
   const handleDiffError = useCallback(() => {
@@ -142,6 +154,24 @@ export function SuggestionDiff({
   // ── Keyboard shortcuts ─────────────────────────────────────────────────
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      // ⌘ + Enter → Apply
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !e.shiftKey) {
+        if (!isNudging && !draftInvalidated && !noneEnabled) {
+          e.preventDefault();
+          handleApply();
+        }
+        return;
+      }
+
+      // ⌘ + Shift + Enter → Try Again
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "Enter") {
+        if (onTryAgain && hasAlternate && !isNudging && !isTryingAgain) {
+          e.preventDefault();
+          onTryAgain();
+        }
+        return;
+      }
+
       if (e.key === "Escape") {
         if (isTextInput(e)) return;
         e.preventDefault();
@@ -174,7 +204,18 @@ export function SuggestionDiff({
         }
       }
     },
-    [onReject, toggleDiffMode, toggleShowRemovals]
+    [
+      onReject,
+      toggleDiffMode,
+      toggleShowRemovals,
+      handleApply,
+      onTryAgain,
+      hasAlternate,
+      isNudging,
+      isTryingAgain,
+      draftInvalidated,
+      noneEnabled,
+    ]
   );
 
   useEffect(() => {
@@ -190,26 +231,65 @@ export function SuggestionDiff({
       ? "Apply"
       : "Apply selected";
 
+  const isRunning = isNudging || (isTryingAgain ?? false);
+
   // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="space-y-0">
       <div className="border border-gray-200 rounded-lg overflow-hidden">
         {/* ── Header ───────────────────────────────────────────────── */}
         <div className="bg-gray-50 px-4 py-3 flex items-center justify-between border-b border-gray-200">
-          <div>
-            <span className="text-sm font-semibold text-gray-800">
-              {modeConfig.label} Edit Suggestion
-            </span>
-            <span className="ml-2 text-xs text-gray-500">
-              {modeConfig.description}
-            </span>
+          <div className="flex items-center gap-2">
+            {/* A4.3: Pen icon with wiggle during generation */}
+            {isRunning && (
+              <span className="inline-block text-gray-400">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  style={{
+                    animation: "pen-wiggle 2.4s ease-in-out infinite",
+                    transformOrigin: "2px 14px",
+                  }}
+                >
+                  <path
+                    d="M11.5 1.5L14.5 4.5L5 14H2V11L11.5 1.5Z"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M9.5 3.5L12.5 6.5"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </span>
+            )}
+            <div>
+              <span className="text-sm font-semibold text-gray-800">
+                {modeConfig.label} Edit
+              </span>
+              <span className="ml-2 text-xs text-gray-500">
+                {isRunning
+                  ? isNudging
+                    ? "Reworking…"
+                    : "Refining…"
+                  : modeConfig.description}
+              </span>
+            </div>
           </div>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={handleApply}
               disabled={applyDisabled}
-              className="px-3 py-1.5 bg-gray-900 text-white rounded-md text-sm font-medium hover:bg-gray-800 disabled:opacity-50 transition-colors"
+              className="btn-micro px-3 py-1.5 bg-gray-900 text-white rounded-md text-sm font-medium hover:bg-gray-800 disabled:opacity-50"
+              title="⌘ Enter"
             >
               {applyLabel}
             </button>
@@ -217,9 +297,10 @@ export function SuggestionDiff({
               type="button"
               onClick={onReject}
               disabled={isNudging}
-              className="px-3 py-1.5 bg-white text-gray-700 border border-gray-300 rounded-md text-sm font-medium hover:bg-gray-50 disabled:opacity-50 transition-colors"
+              className="btn-micro px-3 py-1.5 bg-white text-gray-700 border border-gray-300 rounded-md text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+              title="Esc"
             >
-              Reject
+              Dismiss
             </button>
           </div>
         </div>
@@ -239,7 +320,7 @@ export function SuggestionDiff({
               key={m}
               type="button"
               onClick={() => setViewMode(m)}
-              className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+              className={`btn-micro px-2.5 py-1 text-xs rounded-full border ${
                 viewMode === m
                   ? "border-gray-400 bg-gray-200 text-gray-800"
                   : "border-gray-300 text-gray-600 hover:bg-gray-100 hover:border-gray-400"
@@ -253,21 +334,36 @@ export function SuggestionDiff({
           </span>
         </div>
 
-        {/* ── Comparison content ────────────────────────────────────── */}
-        <ComparisonContent
-          viewMode={viewMode}
-          originalText={originalText}
-          suggestedText={suggestedText}
-          selectiveText={selectiveText}
-          result={result}
-          computing={computing}
-          hunks={hunks}
-          enabledHunks={enabledHunks}
-          onToggleHunk={toggleHunk}
-          showRemovals={showRemovals}
-          toggleShowRemovals={toggleShowRemovals}
-          allEnabled={allEnabled}
-        />
+        {/* ── Comparison content ─────────────────────────────────── */}
+        {/* A4.3: Keep existing content visible during generation,   */}
+        {/* just dim it. New result slides in with card-enter anim.  */}
+        <div className="relative">
+          {isRunning && (
+            <>
+              {/* Dim overlay — pointer-events-none so user sees text but can't interact */}
+              <div className="absolute inset-0 bg-white/50 z-10 pointer-events-none" />
+              {/* Subtle progress shimmer bar at top edge */}
+              <div className="absolute top-0 left-0 right-0 h-0.5 animate-shimmer z-10" />
+            </>
+          )}
+          <div key={animKey} className={isRunning ? "" : "animate-card-enter"}>
+            <ComparisonContent
+              viewMode={viewMode}
+              originalText={originalText}
+              suggestedText={suggestedText}
+              selectiveText={selectiveText}
+              result={result}
+              computing={computing}
+              hunks={hunks}
+              enabledHunks={enabledHunks}
+              onToggleHunk={toggleHunk}
+              showRemovals={showRemovals}
+              toggleShowRemovals={toggleShowRemovals}
+              allEnabled={allEnabled}
+              suggestionIndex={suggestionIndex}
+            />
+          </div>
+        </div>
 
         {/* ── Try again (swap) + Nudge bar ──────────────────────────── */}
         <div className="border-t border-gray-100 px-3 py-2 flex flex-wrap items-center gap-3">
@@ -276,9 +372,10 @@ export function SuggestionDiff({
               type="button"
               onClick={onTryAgain}
               disabled={isNudging || isTryingAgain}
-              className="px-2.5 py-1 text-xs rounded-full border border-gray-300 text-gray-700 hover:bg-gray-100 hover:border-gray-400 disabled:opacity-50 transition-colors"
+              className="btn-micro px-2.5 py-1 text-xs rounded-full border border-gray-300 text-gray-700 hover:bg-gray-100 hover:border-gray-400 disabled:opacity-50"
+              title="⌘ Shift Enter"
             >
-              {isTryingAgain ? "…" : "Try again"}
+              {isTryingAgain ? "Refining…" : "Try again"}
             </button>
           )}
           <NudgeBar
@@ -319,6 +416,7 @@ type ComparisonContentProps = {
   showRemovals: boolean;
   toggleShowRemovals: () => void;
   allEnabled: boolean;
+  suggestionIndex: number;
 };
 
 function ComparisonContent({
@@ -334,6 +432,7 @@ function ComparisonContent({
   showRemovals,
   toggleShowRemovals,
   allEnabled,
+  suggestionIndex,
 }: ComparisonContentProps) {
   if (viewMode === "side-by-side") {
     return (
@@ -367,6 +466,7 @@ function ComparisonContent({
             showRemovals={showRemovals}
             onToggleRemovals={toggleShowRemovals}
             suggestedText={suggestedText}
+            suggestionIndex={suggestionIndex}
           />
         </div>
       </div>
@@ -388,6 +488,7 @@ function ComparisonContent({
           showRemovals={showRemovals}
           onToggleRemovals={toggleShowRemovals}
           suggestedText={suggestedText}
+          suggestionIndex={suggestionIndex}
         />
       </div>
     );

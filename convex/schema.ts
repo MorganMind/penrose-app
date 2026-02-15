@@ -139,7 +139,9 @@ export default defineSchema({
       v.literal("initial"),
       v.literal("manual"),
       v.literal("ai"),
-      v.literal("restore")
+      v.literal("restore"),
+      v.literal("publish"),
+      v.literal("milestone")
     ),
     aiMetadata: v.optional(
       v.object({
@@ -149,6 +151,12 @@ export default defineSchema({
         prompt: v.optional(v.string()),
       })
     ),
+    /** Title at checkpoint time (for milestone/publish snapshots). */
+    titleSnapshot: v.optional(v.string()),
+    /** User-pinned milestones are protected from compaction. */
+    isPinned: v.optional(v.boolean()),
+    /** Optional user-given name for milestone revisions. */
+    name: v.optional(v.string()),
     revisionNumber: v.number(),
     createdAt: v.number(),
     authorId: v.id("users"),
@@ -212,6 +220,34 @@ export default defineSchema({
   })
     .index("by_org", ["orgId"])
     .index("by_org_and_user", ["orgId", "userId"]),
+
+  /**
+   * Bounded preference signals from Apply/Reject/Hunk toggles.
+   * NOT profile mutations — small nudges that influence generation
+   * and selection slightly. Voice score remains the hard constraint.
+   */
+  voicePreferenceSignals: defineTable({
+    orgId: v.id("orgs"),
+    userId: v.id("users"),
+    editorialMode: editorialModeValidator,
+    source: v.union(
+      v.literal("apply"),
+      v.literal("reject"),
+      v.literal("hunk_apply")
+    ),
+    postId: v.optional(v.id("posts")),
+
+    // Dimension: which stylistic axis (bounded -1 to 1)
+    dimension: v.string(),
+    value: v.number(), // -1 to 1, magnitude capped at 0.05 per signal
+    magnitude: v.number(), // 0 to 0.05
+
+    createdAt: v.number(),
+  })
+    .index("by_org", ["orgId"])
+    .index("by_org_and_user", ["orgId", "userId"])
+    .index("by_org_mode_user", ["orgId", "editorialMode", "userId"])
+    .index("by_created", ["createdAt"]),
 
   // ── Voice Identity Engine ──────────────────────────────────────────────
 
@@ -528,6 +564,33 @@ export default defineSchema({
     value: v.string(),
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
+
+  // ── Realtime suggestion telemetry (B3.4) ─────────────────────────────────
+  realtimeSuggestionMetrics: defineTable({
+    userId: v.id("users"),
+    orgId: v.optional(v.id("orgs")),
+    postId: v.optional(v.id("posts")),
+    mode: v.string(),
+    provider: v.string(),
+    model: v.string(),
+    promptVersion: v.string(),
+    profileConfidence: v.optional(v.number()),
+    aggressivenessLevel: v.string(),
+    wasGenerated: v.boolean(),
+    wasSuppressed: v.boolean(),
+    suppressionReason: v.optional(v.string()),
+    semanticScore: v.optional(v.number()),
+    stylisticScore: v.optional(v.number()),
+    scopeScore: v.optional(v.number()),
+    combinedScore: v.optional(v.number()),
+    enforcementClass: v.optional(v.string()),
+    latencyMs: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId", "createdAt"])
+    .index("by_org", ["orgId", "createdAt"])
+    .index("by_mode", ["mode", "createdAt"])
+    .index("by_suppression", ["wasSuppressed", "mode", "createdAt"]),
 
   // ── Internal explainability (Phase 14.5 Part 4) ─────────────────────────
   //
